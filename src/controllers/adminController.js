@@ -95,14 +95,8 @@ const getDashboardKpis = async (req, res, next) => {
     ]);
     const totalTransactionVolume = transactionAggregate[0]?.totalVolume || 0;
 
-    // Monthly charts data
-    const monthlyCharts = [
-      { month: 'May', gmv: 68000, bookings: 14, revenue: 3400 },
-      { month: 'Jun', gmv: 95000, bookings: 21, revenue: 4750 },
-      { month: 'Jul', gmv: 140000, bookings: 32, revenue: 7000 },
-      { month: 'Aug', gmv: 215000, bookings: 48, revenue: 10750 },
-      { month: 'Sep', gmv: Math.max(385000, financials.totalGmv || 385000), bookings: Math.max(68, totalBookings || 68), revenue: Math.max(19250, financials.totalPlatformRevenue || 19250) },
-    ];
+    // Monthly charts data - strictly real data
+    const monthlyCharts = [];
 
     res.status(200).json({
       success: true,

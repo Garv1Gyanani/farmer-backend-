@@ -1,3 +1,5 @@
+const User = require('../models/User');
+const AuditLog = require('../models/AuditLog');
 const ProviderProfile = require('../models/ProviderProfile');
 const Booking = require('../models/Booking');
 const Wallet = require('../models/Wallet');
@@ -686,6 +688,161 @@ const uploadProviderKyc = async (req, res, next) => {
   }
 };
 
+// Submit full Provider Onboarding & KYC dossier for Admin review
+const submitProviderOnboarding = async (req, res, next) => {
+  try {
+    const {
+      fullName,
+      emailAddress,
+      businessName,
+      serviceCategory,
+      serviceTags,
+      serviceDetails,
+      baseLocation,
+      coverageRadiusKm,
+      tractorCount,
+      harvesterCount,
+      identityDocName,
+      identityDocUrl,
+      equipmentRcFileName,
+      equipmentRcFileUrl,
+      bankPassbookFileName,
+      bankPassbookFileUrl,
+    } = req.body;
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (fullName && fullName.trim()) user.name = fullName.trim();
+    if (emailAddress && emailAddress.trim()) user.email = emailAddress.trim().toLowerCase();
+    user.status = 'pending_verification';
+    await user.save();
+
+    // Prepare KYC documents
+    const kycDocuments = [];
+    if (identityDocUrl) {
+      kycDocuments.push({
+        type: 'identity_proof',
+        title: identityDocName || 'Government Identity Proof',
+        fileUrl: identityDocUrl,
+        status: 'pending',
+        uploadedAt: new Date(),
+      });
+    }
+    if (equipmentRcFileUrl) {
+      kycDocuments.push({
+        type: 'machinery_rc',
+        title: equipmentRcFileName || 'Equipment RC / Ownership',
+        fileUrl: equipmentRcFileUrl,
+        status: 'pending',
+        uploadedAt: new Date(),
+      });
+    }
+    if (bankPassbookFileUrl) {
+      kycDocuments.push({
+        type: 'bank_passbook',
+        title: bankPassbookFileName || 'Bank Passbook / Cheque',
+        fileUrl: bankPassbookFileUrl,
+        status: 'pending',
+        uploadedAt: new Date(),
+      });
+    }
+
+    // Build machinery fleet items based on counts
+    const machineryFleet = [];
+    const tCount = Number(tractorCount) || 0;
+    const hCount = Number(harvesterCount) || 0;
+    for (let i = 1; i <= tCount; i++) {
+      machineryFleet.push({
+        machineryType: 'Tractor 4WD',
+        model: 'Standard 4WD Farm Tractor',
+        horsepower: 55,
+        year: 2023,
+        regPlateNumber: `PB-10-TR-${1000 + i}`,
+        isAvailable: true,
+      });
+    }
+    for (let i = 1; i <= hCount; i++) {
+      machineryFleet.push({
+        machineryType: 'Combine Harvester',
+        model: 'Multi-Crop Combine Harvester',
+        horsepower: 110,
+        year: 2023,
+        regPlateNumber: `PB-10-HV-${2000 + i}`,
+        isAvailable: true,
+      });
+    }
+
+    let profile = await ProviderProfile.findOne({ userId: user._id });
+    if (!profile) {
+      const randomSuffix = Math.floor(10000 + Math.random() * 90000);
+      const contractorId = `PR-${randomSuffix}`;
+
+      profile = new ProviderProfile({
+        userId: user._id,
+        contractorId,
+        enterpriseName: businessName || `${user.name} Agri Services`,
+        primaryCategory: serviceCategory || 'Harvesting & Mechanization',
+        serviceTags: Array.isArray(serviceTags) ? serviceTags : [],
+        coverageRadiusKm: Number(coverageRadiusKm) || 25,
+        isOnline: false,
+        kycStatus: 'pending',
+        kycDocuments,
+        machineryFleet,
+      });
+    } else {
+      if (businessName) profile.enterpriseName = businessName;
+      if (serviceCategory) profile.primaryCategory = serviceCategory;
+      if (Array.isArray(serviceTags) && serviceTags.length > 0) profile.serviceTags = serviceTags;
+      if (coverageRadiusKm) profile.coverageRadiusKm = Number(coverageRadiusKm);
+      if (machineryFleet.length > 0) profile.machineryFleet = machineryFleet;
+      profile.kycStatus = 'pending';
+      if (kycDocuments.length > 0) {
+        profile.kycDocuments = kycDocuments;
+      }
+    }
+
+    await profile.save();
+
+    // Broadcast live event to Admin Panel
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('new_kyc_submission', {
+        userRole: 'provider',
+        userId: user._id,
+        name: user.name,
+        phone: user.phone,
+        enterpriseName: profile.enterpriseName,
+        contractorId: profile.contractorId,
+        documentsCount: profile.kycDocuments?.length || 0,
+      });
+      io.emit('provider_updated', { providerId: profile._id });
+    }
+
+    // Audit log
+    await AuditLog.create({
+      action: 'PROVIDER_ONBOARDING_SUBMITTED',
+      targetType: 'provider',
+      targetId: user._id,
+      details: {
+        enterpriseName: profile.enterpriseName,
+        contractorId: profile.contractorId,
+        documentsCount: profile.kycDocuments?.length || 0,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Provider profile and documents submitted for admin review.',
+      profile,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getProviderDashboard,
   toggleOnlineStatus,
@@ -701,4 +858,5 @@ module.exports = {
   getReviews,
   getDemandHeatmap,
   uploadProviderKyc,
+  submitProviderOnboarding,
 };

@@ -15,12 +15,14 @@ const {
   getReviews,
   getDemandHeatmap,
   uploadProviderKyc,
+  submitProviderOnboarding,
 } = require('../controllers/providerController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
 
 router.use(protect);
 
+router.post('/onboarding', submitProviderOnboarding);
 router.get('/dashboard', getProviderDashboard);
 router.post('/toggle-online', toggleOnlineStatus);
 router.get('/fleet', getFleet);

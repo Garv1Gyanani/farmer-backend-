@@ -4,17 +4,6 @@ const machineryItemSchema = new mongoose.Schema({
   machineryType: {
     type: String,
     required: true,
-    enum: [
-      'Tractor 4WD',
-      'Tractor 2WD',
-      'Combine Harvester',
-      'Agri-Drone Sprayer',
-      'Laser Land Leveler',
-      'Rotavator',
-      'Precision Seed Drill',
-      'Baler / Straw Reaper',
-      'Solar Pump Service',
-    ],
   },
   model: { type: String, required: true },
   horsepower: { type: Number, default: 50 },
@@ -30,8 +19,7 @@ const machineryItemSchema = new mongoose.Schema({
 const providerKycDocSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum: ['machinery_rc', 'comprehensive_insurance', 'commercial_driver_license', 'pan_card', 'gst_cert'],
-    required: true,
+    default: 'identity_proof',
   },
   title: { type: String, default: '' },
   fileUrl: { type: String, required: true },
