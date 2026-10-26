@@ -10,7 +10,7 @@ const getCategories = async (req, res, next) => {
     // Attach dynamic service count for each category
     const categoryIds = categories.map((c) => c._id);
     const serviceCounts = await Service.aggregate([
-      { $match: { category: { $in: categoryIds }, isActive: true } },
+      { $match: { category: { $in: categoryIds }, isActive: true, approvalStatus: { $in: ['approved', null] } } },
       { $group: { _id: '$category', count: { $sum: 1 } } },
     ]);
 
@@ -37,8 +37,16 @@ const getCategories = async (req, res, next) => {
 // Get services with filters
 const getServices = async (req, res, next) => {
   try {
-    const { category, search, machineryType, sort } = req.query;
-    let query = { isActive: true };
+    const { category, search, machineryType, sort, status, all } = req.query;
+    let query = { isActive: true, approvalStatus: { $in: ['approved', null] } };
+
+    if (all === 'true' || status === 'all') {
+      delete query.approvalStatus;
+      delete query.isActive;
+    } else if (status) {
+      query.approvalStatus = status;
+      delete query.isActive;
+    }
 
     if (category) {
       // Find category by slug or id

@@ -873,6 +873,62 @@ const deleteService = async (req, res, next) => {
   }
 };
 
+// 12c. Review Provider Service Approval
+const reviewServiceApproval = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { approvalStatus, rejectionReason } = req.body;
+
+    if (!['approved', 'rejected', 'pending'].includes(approvalStatus)) {
+      return res.status(400).json({ success: false, message: 'Invalid approval status.' });
+    }
+
+    const service = await Service.findById(id).populate('category');
+    if (!service) {
+      return res.status(404).json({ success: false, message: 'Service not found.' });
+    }
+
+    service.approvalStatus = approvalStatus;
+    if (approvalStatus === 'approved') {
+      service.isActive = true;
+      service.rejectionReason = '';
+    } else if (approvalStatus === 'rejected') {
+      service.isActive = false;
+      service.rejectionReason = rejectionReason || 'Service did not meet platform guidelines';
+    } else {
+      service.isActive = false;
+    }
+
+    await service.save();
+
+    await AuditLog.create({
+      adminId: req.user._id,
+      adminEmail: req.user.email,
+      action: `service_${approvalStatus}`,
+      targetId: id,
+      targetType: 'service',
+      details: { serviceTitle: service.title, approvalStatus, rejectionReason },
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('service_approval_updated', {
+        serviceId: service._id,
+        approvalStatus: service.approvalStatus,
+        providerId: service.providerId,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Service "${service.title}" has been ${approvalStatus}.`,
+      service,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // 13. Audit Logs
 const getAuditLogs = async (req, res, next) => {
   try {
@@ -1836,6 +1892,7 @@ module.exports = {
   getCommissionRecords,
   createOrUpdateService,
   deleteService,
+  reviewServiceApproval,
   createOrUpdateCategory,
   deleteCategory,
   getAuditLogs,

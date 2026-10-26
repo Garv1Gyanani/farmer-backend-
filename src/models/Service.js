@@ -83,6 +83,25 @@ const serviceSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    providerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    createdByRole: {
+      type: String,
+      enum: ['admin', 'provider'],
+      default: 'admin',
+    },
+    approvalStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'approved',
+    },
+    rejectionReason: {
+      type: String,
+      default: '',
+    },
   },
   {
     timestamps: true,

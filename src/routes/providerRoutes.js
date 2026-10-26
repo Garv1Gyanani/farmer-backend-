@@ -16,6 +16,11 @@ const {
   getDemandHeatmap,
   uploadProviderKyc,
   submitProviderOnboarding,
+  submitKycDocumentsLater,
+  saveBankDetails,
+  createProviderService,
+  getMyServices,
+  deleteProviderService,
 } = require('../controllers/providerController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
@@ -23,6 +28,11 @@ const upload = require('../middleware/uploadMiddleware');
 router.use(protect);
 
 router.post('/onboarding', submitProviderOnboarding);
+router.post('/kyc/submit-docs', submitKycDocumentsLater);
+router.post('/bank-details', saveBankDetails);
+router.get('/my-services', getMyServices);
+router.post('/services', createProviderService);
+router.delete('/services/:id', deleteProviderService);
 router.get('/dashboard', getProviderDashboard);
 router.post('/toggle-online', toggleOnlineStatus);
 router.get('/fleet', getFleet);

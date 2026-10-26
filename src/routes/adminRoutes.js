@@ -25,6 +25,7 @@ const {
   getCommissionRecords,
   createOrUpdateService,
   deleteService,
+  reviewServiceApproval,
   createOrUpdateCategory,
   deleteCategory,
   getAuditLogs,
@@ -66,6 +67,7 @@ router.get('/commissions', getCommissionRecords);
 router.post('/commissions/vest-now', triggerCommissionVesting);
 router.post('/services', createOrUpdateService);
 router.put('/services/:id', createOrUpdateService);
+router.put('/services/:id/approval', reviewServiceApproval);
 router.delete('/services/:id', deleteService);
 router.post('/categories', createOrUpdateCategory);
 router.put('/categories/:id', createOrUpdateCategory);

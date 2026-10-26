@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const AuditLog = require('../models/AuditLog');
 const ProviderProfile = require('../models/ProviderProfile');
+const Service = require('../models/Service');
 const Booking = require('../models/Booking');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
@@ -843,6 +844,217 @@ const submitProviderOnboarding = async (req, res, next) => {
   }
 };
 
+// Submit KYC documents after onboarding (when skipped during registration)
+const submitKycDocumentsLater = async (req, res, next) => {
+  try {
+    const {
+      identityDocName,
+      identityDocUrl,
+      equipmentRcFileName,
+      equipmentRcFileUrl,
+      bankPassbookFileName,
+      bankPassbookFileUrl,
+    } = req.body;
+
+    const profile = await ProviderProfile.findOne({ userId: req.user._id });
+    if (!profile) {
+      return res.status(404).json({ success: false, message: 'Provider profile not found.' });
+    }
+
+    if (!profile.kycDocuments) profile.kycDocuments = [];
+
+    const addOrUpdateDoc = (type, title, fileUrl) => {
+      if (!fileUrl) return;
+      const idx = profile.kycDocuments.findIndex((d) => d.type === type);
+      const docData = {
+        type,
+        title: title || type,
+        fileUrl,
+        status: 'pending',
+        uploadedAt: new Date(),
+      };
+      if (idx >= 0) {
+        profile.kycDocuments[idx] = docData;
+      } else {
+        profile.kycDocuments.push(docData);
+      }
+    };
+
+    addOrUpdateDoc('identity_proof', identityDocName || 'Identity Document', identityDocUrl);
+    addOrUpdateDoc('machinery_rc', equipmentRcFileName || 'Equipment RC', equipmentRcFileUrl);
+    addOrUpdateDoc('bank_passbook', bankPassbookFileName || 'Bank Passbook', bankPassbookFileUrl);
+
+    profile.kycStatus = 'pending';
+    await profile.save();
+
+    emitToRole('admin', 'new_kyc_submission', {
+      userRole: 'provider',
+      userId: req.user._id,
+      name: req.user.name,
+      documentsCount: profile.kycDocuments.length,
+      timestamp: new Date(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'KYC documents submitted successfully for verification.',
+      kycDocuments: profile.kycDocuments,
+      kycStatus: profile.kycStatus,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Save or update Provider Bank Details
+const saveBankDetails = async (req, res, next) => {
+  try {
+    const { accountHolder, accountNumber, ifsc, bankName } = req.body;
+    if (!accountNumber || !ifsc) {
+      return res.status(400).json({ success: false, message: 'Account number and IFSC code are required.' });
+    }
+
+    const profile = await ProviderProfile.findOne({ userId: req.user._id });
+    if (!profile) {
+      return res.status(404).json({ success: false, message: 'Provider profile not found.' });
+    }
+
+    profile.bankDetails = {
+      accountHolder: accountHolder || req.user.name,
+      accountNumber: accountNumber.trim(),
+      ifsc: ifsc.trim().toUpperCase(),
+      bankName: bankName || 'Bank',
+      isVerified: false,
+    };
+
+    await profile.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Bank details saved successfully.',
+      bankDetails: profile.bankDetails,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Create new Service by Provider (Gated by KYC Documents)
+const createProviderService = async (req, res, next) => {
+  try {
+    const {
+      title,
+      category,
+      description,
+      machineryType,
+      pricingModel,
+      basePrice,
+      minUnits,
+      specifications,
+      imageUrl,
+    } = req.body;
+
+    if (!title || !category || !basePrice || !machineryType) {
+      return res.status(400).json({
+        success: false,
+        message: 'Title, category, machineryType, and basePrice are required.',
+      });
+    }
+
+    const profile = await ProviderProfile.findOne({ userId: req.user._id });
+    if (!profile) {
+      return res.status(404).json({ success: false, message: 'Provider profile not found.' });
+    }
+
+    // REQUIREMENT: Provider can only add services AFTER KYC documents are added
+    const docs = profile.kycDocuments || [];
+    if (docs.length === 0) {
+      return res.status(403).json({
+        success: false,
+        code: 'KYC_DOCUMENTS_REQUIRED',
+        message: 'Please upload your KYC documents (Aadhaar Card, Machinery RC, Bank Passbook) before adding services.',
+      });
+    }
+
+    const service = await Service.create({
+      title: title.trim(),
+      category,
+      description: description || `Professional ${title} service.`,
+      machineryType: machineryType.trim(),
+      pricingModel: pricingModel || 'per_acre',
+      basePrice: Number(basePrice),
+      minUnits: Number(minUnits) || 1,
+      specifications: specifications || {
+        horsepower: '50-60 HP',
+        operatorIncluded: true,
+        fuelIncluded: true,
+      },
+      providerId: req.user._id,
+      createdByRole: 'provider',
+      approvalStatus: 'pending', // Goes to admin for review
+      isActive: false, // Visible to farmers only after admin approval
+      providerName: profile.enterpriseName || req.user.name,
+      operatingArea: `${profile.operatingRadiusKm || 25} km radius`,
+      imageUrl: imageUrl || '',
+    });
+
+    const populatedService = await Service.findById(service._id).populate('category');
+
+    emitToRole('admin', 'new_service_pending_approval', {
+      serviceId: service._id,
+      title: service.title,
+      providerName: populatedService.providerName,
+      basePrice: service.basePrice,
+      createdAt: service.createdAt,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Service submitted successfully. It will be visible to farmers once reviewed and approved by admin.',
+      service: populatedService,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get provider's own services
+const getMyServices = async (req, res, next) => {
+  try {
+    const services = await Service.find({ providerId: req.user._id })
+      .populate('category')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: services.length,
+      services,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete provider's own service
+const deleteProviderService = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const service = await Service.findOne({ _id: id, providerId: req.user._id });
+    if (!service) {
+      return res.status(404).json({ success: false, message: 'Service not found or unauthorized.' });
+    }
+
+    await Service.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Service deleted successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getProviderDashboard,
   toggleOnlineStatus,
@@ -859,4 +1071,9 @@ module.exports = {
   getDemandHeatmap,
   uploadProviderKyc,
   submitProviderOnboarding,
+  submitKycDocumentsLater,
+  saveBankDetails,
+  createProviderService,
+  getMyServices,
+  deleteProviderService,
 };
