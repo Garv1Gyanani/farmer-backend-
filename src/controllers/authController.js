@@ -7,6 +7,16 @@ const OtpSession = require('../models/OtpSession');
 const generateToken = require('../utils/generateToken');
 const { normalizePhone, getPhoneVariants } = require('../utils/phoneHelper');
 
+const getRoleLabel = (role) => {
+  switch (role) {
+    case 'farmer': return 'Farmer';
+    case 'provider': return 'Service Provider';
+    case 'agent': return 'Village Agent';
+    case 'admin': return 'Administrator';
+    default: return role;
+  }
+};
+
 // Register a new user
 const register = async (req, res, next) => {
   try {
@@ -46,6 +56,14 @@ const register = async (req, res, next) => {
 
     let user = await User.findOne({ phone: { $in: phoneVariants } });
     if (user) {
+      if (user.role && user.role !== role) {
+        return res.status(400).json({
+          success: false,
+          roleMismatch: true,
+          existingRole: user.role,
+          message: `This phone number is already registered as a ${getRoleLabel(user.role)}. Please use the ${getRoleLabel(user.role)} application to login.`,
+        });
+      }
       // Update existing user record created via OTP or draft stage
       user.phone = cleanPhone;
       if (name) user.name = name.trim();
@@ -267,6 +285,16 @@ const login = async (req, res, next) => {
       });
     }
 
+    const requestedRole = req.body.role;
+    if (requestedRole && user.role && user.role !== requestedRole) {
+      return res.status(400).json({
+        success: false,
+        roleMismatch: true,
+        existingRole: user.role,
+        message: `This account is registered as a ${getRoleLabel(user.role)}. Please use the ${getRoleLabel(user.role)} portal to login.`,
+      });
+    }
+
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({
@@ -319,7 +347,7 @@ const { sendFcmOtpNotification } = require('../services/fcmService');
 // Request OTP for phone / email signin
 const requestOtp = async (req, res, next) => {
   try {
-    const { target, phone, email, channel, fcmToken } = req.body;
+    const { target, phone, email, channel, fcmToken, role } = req.body;
     const inputTarget = (target || phone || email || '').trim();
     if (!inputTarget) {
       return res.status(400).json({ success: false, message: 'Phone or email target is required.' });
@@ -327,6 +355,26 @@ const requestOtp = async (req, res, next) => {
 
     const isEmail = inputTarget.includes('@') || channel === 'email';
     const cleanTarget = isEmail ? inputTarget.toLowerCase() : normalizePhone(inputTarget);
+    const phoneVariants = isEmail ? [cleanTarget] : getPhoneVariants(cleanTarget);
+
+    // If role requested, verify existing account role to prevent cross-portal confusion early
+    if (role) {
+      const existingUser = await User.findOne({
+        $or: [
+          { phone: { $in: phoneVariants } },
+          { email: cleanTarget.toLowerCase() },
+        ],
+      });
+      if (existingUser && existingUser.role && existingUser.role !== role) {
+        return res.status(400).json({
+          success: false,
+          roleMismatch: true,
+          existingRole: existingUser.role,
+          message: `This ${isEmail ? 'email' : 'phone number'} is already registered as a ${getRoleLabel(existingUser.role)}. Please open the ${getRoleLabel(existingUser.role)} app to login.`,
+        });
+      }
+    }
+
     const dynamicOtp = String(Math.floor(100000 + Math.random() * 900000));
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
 
@@ -412,6 +460,16 @@ const verifyOtp = async (req, res, next) => {
       ],
     });
 
+    if (user && user.role && role && user.role !== role) {
+      return res.status(400).json({
+        success: false,
+        roleMismatch: true,
+        existingRole: user.role,
+        message: `This phone number is already registered as a ${getRoleLabel(user.role)}. Please open the ${getRoleLabel(user.role)} application to login.`,
+      });
+    }
+
+    const isNewUser = !user;
     if (!user) {
       // Auto-register via OTP
       user = await User.create({
@@ -459,6 +517,7 @@ const verifyOtp = async (req, res, next) => {
       success: true,
       message: 'OTP verified successfully',
       token,
+      isNewUser,
       user: {
         _id: user._id,
         name: user.name,

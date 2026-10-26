@@ -120,7 +120,7 @@ const seedData = async () => {
       {
         title: 'Laser Land Leveling (Dual Transmitter)',
         category: catMap.get('land-preparation'),
-        description: 'Dual-axis laser transmitter with hydraulic bucket scraper. Saves up to 25% irrigation water and improves crop yields by 15%.',
+        description: 'Laser leveling machine that flattens your land evenly. Saves water, saves pump time, and helps crops grow better.',
         machineryType: 'Laser Land Leveler',
         pricingModel: 'per_acre',
         basePrice: 950,
@@ -140,7 +140,7 @@ const seedData = async () => {
       {
         title: 'Heavy Duty Rotavator Tillage',
         category: catMap.get('land-preparation'),
-        description: 'Multi-speed gearbox rotavator for fine seedbed preparation in single pass. Ideal for wheat and vegetable sowing.',
+        description: 'Breaks hard soil clods and prepares smooth soft soil bed in a single pass for easy seed sowing.',
         machineryType: 'Rotavator',
         pricingModel: 'per_acre',
         basePrice: 1200,
@@ -160,13 +160,13 @@ const seedData = async () => {
       {
         title: 'Agri-Drone Precision Nano-Sprayer',
         category: catMap.get('crop-protection'),
-        description: 'Hexacopter autonomous drone with dual radar obstacle avoidance. Fast, uniform crop canopy penetration without soil compaction.',
+        description: 'Fast drone spraying for quick and even medicine spray across crops without stepping on or harming the soil.',
         machineryType: 'Agri-Drone Sprayer',
         pricingModel: 'per_acre',
         basePrice: 450,
-        minUnits: 3,
+        minUnits: 2,
         specifications: {
-          horsepower: 'Electric (Dual 28000mAh Battery)',
+          horsepower: 'Electric (Dual Battery)',
           implementWidth: '6.5 Metre Spray Swath',
           fuelIncluded: true,
           operatorIncluded: true,
@@ -180,7 +180,7 @@ const seedData = async () => {
       {
         title: 'Super Seeder Direct Paddy-Wheat Drill',
         category: catMap.get('sowing-seeding'),
-        description: 'Simultaneous residue mulching and precision wheat sowing in standing paddy stubble. Eliminates stubble burning completely.',
+        description: 'Cuts standing stubble and sows wheat seeds at the exact same time. Saves work and prevents stubble burning.',
         machineryType: 'Precision Seed Drill',
         pricingModel: 'per_acre',
         basePrice: 1600,
@@ -200,7 +200,7 @@ const seedData = async () => {
       {
         title: 'Combine Harvester (Paddy & Grain Master)',
         category: catMap.get('harvesting'),
-        description: 'Track-type combine harvester with Straw Management System (SMS) cutter bar. Operates smoothly even in wet and lodged field conditions.',
+        description: 'Harvests, threshes, and cleans your grain cleanly in one fast run. Works smoothly even in wet soil.',
         machineryType: 'Combine Harvester',
         pricingModel: 'per_acre',
         basePrice: 2400,
@@ -220,7 +220,7 @@ const seedData = async () => {
       {
         title: 'High-Density Straw Baler',
         category: catMap.get('post-harvest'),
-        description: 'Automatic twine knotter straw baler. Compresses loose stubble into compact rectangular bales for easy transport to bio-plants.',
+        description: 'Packs loose crop straw and stubble into tight rectangular blocks for quick and easy transport.',
         machineryType: 'Baler / Straw Reaper',
         pricingModel: 'per_acre',
         basePrice: 850,
@@ -240,7 +240,7 @@ const seedData = async () => {
       {
         title: 'Comprehensive NPK Soil Lab Health Analysis',
         category: catMap.get('soil-testing'),
-        description: 'Certified soil core sampling, organic carbon, pH, electrical conductivity, macro & micronutrient profiling with localized fertilizer prescription.',
+        description: 'Soil test for nutrition, health, and fertilizer advice so you give only what your field truly needs.',
         machineryType: 'Soil Testing Lab Kit',
         pricingModel: 'per_acre',
         basePrice: 600,
