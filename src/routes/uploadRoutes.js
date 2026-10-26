@@ -1,10 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const upload = require('../middleware/uploadMiddleware');
-const { protect } = require('../middleware/authMiddleware');
 const { uploadToS3 } = require('../services/s3Service');
 
-// POST /api/upload - Upload any file directly to Supabase S3 bucket
+// POST /api/upload - Upload any file directly with resilient storage
 router.post('/', upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
@@ -19,10 +18,17 @@ router.post('/', upload.single('file'), async (req, res, next) => {
       folder
     );
 
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.get('host');
+    const absoluteFileUrl = s3Result.proxyUrl.startsWith('http')
+      ? s3Result.proxyUrl
+      : `${protocol}://${host}${s3Result.proxyUrl}`;
+
     res.status(200).json({
       success: true,
-      message: 'File uploaded successfully to Supabase S3 bucket',
-      fileUrl: s3Result.proxyUrl,
+      message: 'File uploaded successfully',
+      fileUrl: absoluteFileUrl,
+      relativeUrl: s3Result.proxyUrl,
       presignedUrl: s3Result.presignedUrl,
       key: s3Result.key,
       bucket: s3Result.bucket,
