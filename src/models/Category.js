@@ -35,6 +35,10 @@ const categorySchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    equipmentTags: {
+      type: [String],
+      default: [],
+    },
   },
   {
     timestamps: true,

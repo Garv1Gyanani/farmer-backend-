@@ -1018,7 +1018,7 @@ const updateAdminProfile = async (req, res, next) => {
 const createOrUpdateCategory = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, description, iconName, imageUrl, order, isActive } = req.body;
+    const { name, description, iconName, imageUrl, order, isActive, equipmentTags } = req.body;
 
     if (!id && !name) {
       return res.status(400).json({ success: false, message: 'Category name is required.' });
@@ -1044,6 +1044,11 @@ const createOrUpdateCategory = async (req, res, next) => {
       if (imageUrl !== undefined) category.imageUrl = imageUrl;
       if (order !== undefined) category.order = Number(order);
       if (isActive !== undefined) category.isActive = Boolean(isActive);
+      if (equipmentTags !== undefined) {
+        category.equipmentTags = Array.isArray(equipmentTags)
+          ? equipmentTags.map((t) => String(t).trim()).filter(Boolean)
+          : [];
+      }
 
       await category.save();
 
@@ -1076,6 +1081,9 @@ const createOrUpdateCategory = async (req, res, next) => {
         imageUrl: imageUrl || '',
         order: Number(order) || 0,
         isActive: isActive !== undefined ? Boolean(isActive) : true,
+        equipmentTags: Array.isArray(equipmentTags)
+          ? equipmentTags.map((t) => String(t).trim()).filter(Boolean)
+          : [],
       });
 
       await AuditLog.create({
