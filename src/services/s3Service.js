@@ -62,20 +62,22 @@ const uploadToS3 = async (fileBuffer, originalname, mimetype, folder = 'uploads'
     });
     const presignedUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 7 * 24 * 3600 });
 
+    const proxyPath = uniqueKey.startsWith('uploads/') ? `/${uniqueKey}` : `/uploads/${uniqueKey}`;
     return {
       key: uniqueKey,
       bucket: BUCKET_NAME,
-      proxyUrl: `/uploads/${uniqueKey}`,
+      proxyUrl: proxyPath,
       s3ProxyUrl: `/api/storage/${uniqueKey}`,
       presignedUrl,
     };
   } catch (s3Error) {
     console.warn('[Storage] S3 upload error, seamlessly using local server storage:', s3Error.message);
+    const proxyPath = uniqueKey.startsWith('uploads/') ? `/${uniqueKey}` : `/uploads/${uniqueKey}`;
     return {
       key: uniqueKey,
       bucket: 'local',
-      proxyUrl: `/uploads/${uniqueKey}`,
-      presignedUrl: `/uploads/${uniqueKey}`,
+      proxyUrl: proxyPath,
+      presignedUrl: proxyPath,
     };
   }
 };
