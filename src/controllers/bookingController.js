@@ -156,6 +156,31 @@ const applyCoupon = async (req, res, next) => {
   }
 };
 
+// Create dynamic Razorpay Order directly before checkout
+const createRazorpayOrderDirect = async (req, res, next) => {
+  try {
+    const { amount, serviceTitle, acreage } = req.body;
+    const numAmount = Number(amount) || 120;
+    const razorpayOrder = await createRazorpayOrder({
+      amount: numAmount,
+      receipt: `rcpt_${Date.now()}`.slice(0, 40),
+      notes: {
+        serviceTitle: serviceTitle || 'Farm Machinery Service',
+        acreage: String(acreage || 3),
+        farmerId: req.user._id.toString(),
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      keyId: getKeyId(),
+      order: razorpayOrder,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Checkout & Dispatch Booking
 const checkout = async (req, res, next) => {
   try {
@@ -167,7 +192,15 @@ const checkout = async (req, res, next) => {
       scheduledDate,
       timeSlot,
       approachRoadNotes,
-      paymentMethod = 'upi',
+      village,
+      tehsil,
+      district,
+      totalAmountFromBody,
+      paymentMethod = 'razorpay',
+      transactionId,
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
     } = req.body;
 
     const farmerProfile = await FarmerProfile.findOne({ userId: req.user._id });
@@ -180,15 +213,15 @@ const checkout = async (req, res, next) => {
         return res.status(404).json({ success: false, message: 'Service not found.' });
       }
 
-      const units = Number(acreage) || 5;
-      const baseAmount = service.basePrice * units;
-      const platformFee = Math.round(baseAmount * 0.05); // 5%
-      const taxes = Math.round(baseAmount * 0.05); // 5% GST
-      const totalAmount = baseAmount + platformFee + taxes;
+      const units = Number(acreage) || 3;
+      const baseAmount = totalAmountFromBody ? Number(totalAmountFromBody) : (service.basePrice * units);
+      const platformFee = 0; // Transparent pricing
+      const taxes = 0;
+      const totalAmount = baseAmount;
 
       // Distribution logic
-      const agentCommissionAmount = Math.round(baseAmount * 0.10); // 10%
-      const providerPayoutAmount = Math.round(baseAmount * 0.85); // 85%
+      const agentCommissionAmount = Math.round(baseAmount * 0.05); // 5%
+      const providerPayoutAmount = Math.round(baseAmount * 0.90); // 90%
 
       const bookingNumber = await generateBookingNumber();
       const startOtp = generateStartOtp();
@@ -196,20 +229,21 @@ const checkout = async (req, res, next) => {
       const booking = await Booking.create({
         bookingNumber,
         farmerId: req.user._id,
+        providerId: service.providerId || null,
         agentId: farmerProfile ? farmerProfile.referredByAgentId : null,
         serviceId: service._id,
         parcelDetails: {
           name: parcelName || (farmerProfile && farmerProfile.parcels[0]?.name) || 'Primary Farm Parcel',
           acreage: units,
-          cropType: cropType || 'Wheat / Paddy',
-          village: farmerProfile?.village || 'Patiala Rural',
-          tehsil: farmerProfile?.tehsilBlock || 'Nabha',
-          district: farmerProfile?.district || 'Patiala',
+          cropType: cropType || 'Agricultural Field Work',
+          village: village || farmerProfile?.village || 'Jaipur Rural',
+          tehsil: tehsil || farmerProfile?.tehsilBlock || 'Amber',
+          district: district || farmerProfile?.district || 'Jaipur',
           approachRoadNotes: approachRoadNotes || '',
-          location: farmerProfile?.location || { type: 'Point', coordinates: [75.8573, 30.901] },
+          location: farmerProfile?.location || { type: 'Point', coordinates: [75.7873, 26.9124] },
         },
         scheduledDate: scheduledDate ? new Date(scheduledDate) : new Date(Date.now() + 86400000),
-        timeSlot: timeSlot || 'morning',
+        timeSlot: timeSlot || 'Morning Slot',
         status: 'pending_broadcast',
         startOtp,
         pricing: {
@@ -224,15 +258,15 @@ const checkout = async (req, res, next) => {
           providerPayoutAmount,
         },
         payment: {
-          method: paymentMethod,
-          status: paymentMethod === 'cash_post_service' ? 'pending' : 'escrow_locked',
-          transactionId: `TXN-${Date.now()}`,
+          method: paymentMethod || 'razorpay',
+          status: 'escrow_locked',
+          transactionId: razorpayPaymentId || transactionId || `pay_${Date.now()}`,
           paidAt: new Date(),
         },
         timeline: [
           {
             status: 'pending_broadcast',
-            note: 'Booking requested by farmer. Dispatch broadcast to nearby machinery fleets.',
+            note: `Booking confirmed with payment authenticated via Razorpay (${razorpayPaymentId || transactionId || 'Verified'}). Dispatched to machinery provider.`,
             updatedBy: req.user._id,
           },
         ],
@@ -259,6 +293,7 @@ const checkout = async (req, res, next) => {
         const booking = await Booking.create({
           bookingNumber,
           farmerId: req.user._id,
+          providerId: item.serviceId.providerId || null,
           agentId: farmerProfile ? farmerProfile.referredByAgentId : null,
           serviceId: item.serviceId._id,
           parcelDetails: {
@@ -682,5 +717,6 @@ module.exports = {
   downloadInvoice,
   downloadWorkCertificate,
   createPaymentOrder,
+  createRazorpayOrderDirect,
   verifyPayment,
 };

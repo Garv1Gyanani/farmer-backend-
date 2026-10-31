@@ -58,7 +58,6 @@ const bookingSchema = new mongoose.Schema(
     },
     timeSlot: {
       type: String,
-      enum: ['morning', 'afternoon', 'full_day'],
       default: 'morning',
     },
     status: {

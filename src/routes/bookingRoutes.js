@@ -13,6 +13,7 @@ const {
   downloadInvoice,
   downloadWorkCertificate,
   createPaymentOrder,
+  createRazorpayOrderDirect,
   verifyPayment,
 } = require('../controllers/bookingController');
 const { protect } = require('../middleware/authMiddleware');
@@ -23,6 +24,7 @@ router.get('/cart', getCart);
 router.post('/cart', addToCart);
 router.delete('/cart/:itemId', removeFromCart);
 router.post('/cart/apply-coupon', applyCoupon);
+router.post('/create-razorpay-order', createRazorpayOrderDirect);
 router.post('/checkout', checkout);
 router.get('/:id', getBookingDetails);
 router.get('/:id/invoice', downloadInvoice);
