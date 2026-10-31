@@ -566,7 +566,7 @@ const getMe = async (req, res, next) => {
 // Update profile details
 const updateProfile = async (req, res, next) => {
   try {
-    const { name, email, preferredLanguage, avatarUrl } = req.body;
+    const { name, email, preferredLanguage, avatarUrl, enterpriseName, businessName, primaryCategory, serviceCategory } = req.body;
     const user = await User.findById(req.user._id);
 
     if (name) user.name = name.trim();
@@ -575,6 +575,17 @@ const updateProfile = async (req, res, next) => {
     if (avatarUrl) user.avatarUrl = avatarUrl;
 
     await user.save();
+
+    if (user.role === 'provider') {
+      const entName = (businessName || enterpriseName || '').trim();
+      const cat = (serviceCategory || primaryCategory || '').trim();
+      const updateData = {};
+      if (entName) updateData.enterpriseName = entName;
+      if (cat) updateData.primaryCategory = cat;
+      if (Object.keys(updateData).length > 0) {
+        await ProviderProfile.findOneAndUpdate({ userId: user._id }, updateData);
+      }
+    }
 
     res.status(200).json({
       success: true,
