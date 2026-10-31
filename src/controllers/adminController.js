@@ -790,6 +790,8 @@ const createOrUpdateService = async (req, res, next) => {
       if (isFeatured !== undefined) service.isFeatured = isFeatured;
       if (isActive !== undefined) service.isActive = isActive;
       if (imageUrl !== undefined) service.imageUrl = imageUrl;
+      if (req.body.approvalStatus !== undefined) service.approvalStatus = req.body.approvalStatus;
+      if (req.body.rejectionReason !== undefined) service.rejectionReason = req.body.rejectionReason;
 
       await service.save();
 
