@@ -71,6 +71,25 @@ const staticUploadsDir = fs.existsSync('/www/wwwroot/apiagritech.divanex.in/uplo
   ? '/www/wwwroot/apiagritech.divanex.in/uploads'
   : path.join(__dirname, '../uploads');
 app.use('/uploads', express.static(staticUploadsDir));
+app.use('/api/uploads', express.static(staticUploadsDir));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/api/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Direct file serving fallback for all uploaded documents
+app.get(['/uploads/*', '/api/uploads/*'], (req, res, next) => {
+  const relativePath = req.params[0] || req.path.replace(/^\/(api\/)?uploads\//, '');
+  const possiblePaths = [
+    path.join('/www/wwwroot/apiagritech.divanex.in/uploads', relativePath),
+    path.join(__dirname, '../uploads', relativePath),
+    path.join(__dirname, '../../uploads', relativePath),
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return res.sendFile(p);
+    }
+  }
+  next();
+});
 
 // Health Check
 app.get('/api/health', (req, res) => {

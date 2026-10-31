@@ -1160,6 +1160,7 @@ const createOrUpdateCategory = async (req, res, next) => {
 const deleteCategory = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const cascade = req.query.cascade === 'true' || req.body?.cascade === true;
     const category = await Category.findById(id);
     if (!category) {
       return res.status(404).json({ success: false, message: 'Category not found.' });
@@ -1168,10 +1169,16 @@ const deleteCategory = async (req, res, next) => {
     // Check if any services are mapped to this category
     const servicesCount = await Service.countDocuments({ category: id });
     if (servicesCount > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot delete category: ${servicesCount} active services are currently assigned to it. Please reassign or delete those services first.`,
-      });
+      if (cascade) {
+        // Cascade delete all associated services
+        await Service.deleteMany({ category: id });
+      } else {
+        return res.status(400).json({
+          success: false,
+          servicesCount,
+          message: `Cannot delete category: ${servicesCount} active services are currently assigned to it. Please reassign or delete those services first.`,
+        });
+      }
     }
 
     await Category.findByIdAndDelete(id);
@@ -1182,12 +1189,15 @@ const deleteCategory = async (req, res, next) => {
       action: 'category_deleted',
       targetId: id,
       targetType: 'service',
-      details: { categoryName: category.name },
+      details: {
+        categoryName: category.name,
+        cascadeDeletedServices: cascade ? servicesCount : 0,
+      },
     });
 
     res.status(200).json({
       success: true,
-      message: `Category "${category.name}" removed successfully.`,
+      message: `Category "${category.name}" ${cascade && servicesCount > 0 ? `and ${servicesCount} associated service(s) ` : ''}removed successfully.`,
     });
   } catch (error) {
     next(error);
