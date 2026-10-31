@@ -979,23 +979,29 @@ const createProviderService = async (req, res, next) => {
     const service = await Service.create({
       title: title.trim(),
       category,
-      description: description || `Professional ${title} service.`,
+      description: description ? description.trim() : '',
       machineryType: machineryType.trim(),
       pricingModel: pricingModel || 'per_acre',
       basePrice: Number(basePrice),
       minUnits: Number(minUnits) || 1,
-      specifications: specifications || {
-        horsepower: '50-60 HP',
-        operatorIncluded: true,
-        fuelIncluded: true,
+      specifications: {
+        horsepower: specifications?.horsepower || '',
+        implementWidth: specifications?.implementWidth || '',
+        fuelIncluded: specifications?.fuelIncluded !== false,
+        operatorIncluded: specifications?.operatorIncluded !== false,
+        turnaroundTime: specifications?.turnaroundTime || '',
       },
       providerId: req.user._id,
       createdByRole: 'provider',
       approvalStatus: 'pending', // Goes to admin for review
       isActive: false, // Visible to farmers only after admin approval
       providerName: profile.enterpriseName || req.user.name,
-      operatingArea: `${profile.operatingRadiusKm || 25} km radius`,
+      operatingArea: profile.coverageRadiusKm ? `${profile.coverageRadiusKm} km radius` : '',
       imageUrl: imageUrl || '',
+      rating: 0,
+      reviewsCount: 0,
+      badgeTag: '',
+      nextSlot: '',
     });
 
     const populatedService = await Service.findById(service._id).populate('category');

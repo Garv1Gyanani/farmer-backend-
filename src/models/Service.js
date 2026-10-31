@@ -35,40 +35,40 @@ const serviceSchema = new mongoose.Schema(
       default: 1,
     },
     specifications: {
-      horsepower: { type: String, default: '50-60 HP' },
-      implementWidth: { type: String, default: '7-9 Feet' },
+      horsepower: { type: String, default: '' },
+      implementWidth: { type: String, default: '' },
       fuelIncluded: { type: Boolean, default: true },
       operatorIncluded: { type: Boolean, default: true },
-      turnaroundTime: { type: String, default: '2-4 hours / parcel' },
+      turnaroundTime: { type: String, default: '' },
     },
     providerName: {
       type: String,
-      default: 'Rajesh Agricultural Services',
+      default: '',
     },
     badgeTag: {
       type: String,
-      default: 'Top Pick',
+      default: '',
     },
     nextSlot: {
       type: String,
-      default: 'Available today',
+      default: '',
     },
     operatingArea: {
       type: String,
-      default: 'Kalwar & 25 km radius',
+      default: '',
     },
     responseTime: {
       type: String,
-      default: '< 30 mins',
+      default: '',
     },
     features: [{ type: String }],
     rating: {
       type: Number,
-      default: 4.8,
+      default: 0,
     },
     reviewsCount: {
       type: Number,
-      default: 86,
+      default: 0,
     },
     imageUrl: {
       type: String,

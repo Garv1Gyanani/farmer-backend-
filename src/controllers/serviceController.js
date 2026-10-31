@@ -75,7 +75,10 @@ const getServices = async (req, res, next) => {
     if (sort === 'price_desc') sortOptions = { basePrice: -1 };
     if (sort === 'rating') sortOptions = { rating: -1 };
 
-    const services = await Service.find(query).populate('category', 'name slug iconName').sort(sortOptions);
+    const services = await Service.find(query)
+      .populate('category', 'name slug iconName')
+      .populate('providerId', 'name phone email role')
+      .sort(sortOptions);
 
     res.status(200).json({
       success: true,
