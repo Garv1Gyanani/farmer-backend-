@@ -67,7 +67,10 @@ if (process.env.NODE_ENV !== 'test') {
 const fs = require('fs');
 
 // Serve uploaded files statically
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+const staticUploadsDir = fs.existsSync('/www/wwwroot/apiagritech.divanex.in/uploads')
+  ? '/www/wwwroot/apiagritech.divanex.in/uploads'
+  : path.join(__dirname, '../uploads');
+app.use('/uploads', express.static(staticUploadsDir));
 
 // Health Check
 app.get('/api/health', (req, res) => {

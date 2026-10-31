@@ -3,7 +3,10 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const path = require('path');
 const fs = require('fs');
 
-const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
+const SERVER_TARGET_UPLOADS = '/www/wwwroot/apiagritech.divanex.in/uploads';
+const UPLOADS_ROOT = fs.existsSync(SERVER_TARGET_UPLOADS)
+  ? SERVER_TARGET_UPLOADS
+  : path.join(__dirname, '../../uploads');
 
 const s3Client = new S3Client({
   forcePathStyle: true,
@@ -27,6 +30,16 @@ const saveLocally = (fileBuffer, uniqueKey) => {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(fullPath, fileBuffer);
+
+  // If server directory exists, ensure a copy is directly stored in /www/wwwroot/apiagritech.divanex.in/uploads
+  if (fs.existsSync(SERVER_TARGET_UPLOADS) && fullPath !== path.join(SERVER_TARGET_UPLOADS, uniqueKey)) {
+    try {
+      const serverTarget = path.join(SERVER_TARGET_UPLOADS, uniqueKey);
+      const sDir = path.dirname(serverTarget);
+      if (!fs.existsSync(sDir)) fs.mkdirSync(sDir, { recursive: true });
+      fs.writeFileSync(serverTarget, fileBuffer);
+    } catch (_) {}
+  }
 };
 
 /**
