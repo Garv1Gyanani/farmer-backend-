@@ -7,9 +7,38 @@ const crypto = require('crypto');
  * refunds, and webhook reconciliation.
  */
 
-const getKeyId = () => process.env.RAZORPAY_KEY_ID || 'rzp_test_TBI1orIzqpWtm9';
-const getKeySecret = () => process.env.RAZORPAY_KEY_SECRET || 'foiwfCo3OpqXyUtDPr1Aibla';
-const getWebhookSecret = () => process.env.RAZORPAY_WEBHOOK_SECRET || 'profarmer_razorpay_webhook_secret_2026';
+let dynamicConfig = {
+  keyId: null,
+  keySecret: null,
+  webhookSecret: null,
+  isLiveMode: false,
+};
+
+const getKeyId = () => dynamicConfig.keyId || process.env.RAZORPAY_KEY_ID || 'rzp_test_TBI1orIzqpWtm9';
+const getKeySecret = () => dynamicConfig.keySecret || process.env.RAZORPAY_KEY_SECRET || 'foiwfCo3OpqXyUtDPr1Aibla';
+const getWebhookSecret = () => dynamicConfig.webhookSecret || process.env.RAZORPAY_WEBHOOK_SECRET || 'profarmer_razorpay_webhook_secret_2026';
+
+const setDynamicConfig = (config) => {
+  if (config.keyId) dynamicConfig.keyId = config.keyId;
+  if (config.keySecret) dynamicConfig.keySecret = config.keySecret;
+  if (config.webhookSecret) dynamicConfig.webhookSecret = config.webhookSecret;
+  if (config.isLiveMode !== undefined) dynamicConfig.isLiveMode = Boolean(config.isLiveMode);
+  razorpayInstance = null;
+};
+
+const loadConfigFromDb = async () => {
+  try {
+    const SystemSetting = require('../models/SystemSetting');
+    const setting = await SystemSetting.findOne({ key: 'razorpay' });
+    if (setting && setting.value) {
+      setDynamicConfig(setting.value);
+    }
+  } catch (err) {
+    // Graceful fallback to env vars
+  }
+};
+
+loadConfigFromDb();
 
 let razorpayInstance = null;
 
@@ -147,6 +176,10 @@ const initiateRefund = async ({ paymentId, amount, notes = {} }) => {
 
 module.exports = {
   getKeyId,
+  getKeySecret,
+  getWebhookSecret,
+  setDynamicConfig,
+  loadConfigFromDb,
   createRazorpayOrder,
   verifyPaymentSignature,
   verifyWebhookSignature,

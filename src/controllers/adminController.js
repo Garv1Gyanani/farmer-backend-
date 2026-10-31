@@ -12,6 +12,13 @@ const AuditLog = require('../models/AuditLog');
 const Wallet = require('../models/Wallet');
 const Notification = require('../models/Notification');
 const SoilReport = require('../models/SoilReport');
+const SystemSetting = require('../models/SystemSetting');
+const {
+  getKeyId,
+  getKeySecret,
+  getWebhookSecret,
+  setDynamicConfig,
+} = require('../services/razorpayService');
 const { emitToUser, broadcastEvent } = require('../socket/socketHandler');
 const { normalizePhone, getPhoneVariants } = require('../utils/phoneHelper');
 
@@ -1878,7 +1885,95 @@ const updateProvider = async (req, res, next) => {
   }
 };
 
+const getRazorpaySettings = async (req, res, next) => {
+  try {
+    const setting = await SystemSetting.findOne({ key: 'razorpay' });
+    const currentKeyId = getKeyId();
+    const currentSecret = getKeySecret();
+    const currentWebhook = getWebhookSecret();
+
+    const maskedSecret = currentSecret && currentSecret.length > 8
+      ? `${currentSecret.slice(0, 4)}${'*'.repeat(currentSecret.length - 8)}${currentSecret.slice(-4)}`
+      : '********';
+
+    res.status(200).json({
+      success: true,
+      settings: {
+        keyId: setting?.value?.keyId || currentKeyId,
+        keySecretMasked: maskedSecret,
+        webhookSecret: setting?.value?.webhookSecret || currentWebhook,
+        isLiveMode: setting?.value?.isLiveMode !== undefined
+          ? setting.value.isLiveMode
+          : currentKeyId.startsWith('rzp_live'),
+        updatedAt: setting?.updatedAt || null,
+        isConfiguredInDb: Boolean(setting?.value?.keyId),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateRazorpaySettings = async (req, res, next) => {
+  try {
+    const { keyId, keySecret, webhookSecret, isLiveMode } = req.body;
+
+    if (!keyId || !keyId.trim().startsWith('rzp_')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Razorpay Key ID. Must start with rzp_test_ or rzp_live_.',
+      });
+    }
+
+    let existingSetting = await SystemSetting.findOne({ key: 'razorpay' });
+    const effectiveSecret = (keySecret && keySecret.trim().length > 0 && !keySecret.includes('*'))
+      ? keySecret.trim()
+      : (existingSetting?.value?.keySecret || getKeySecret());
+
+    const payload = {
+      keyId: keyId.trim(),
+      keySecret: effectiveSecret,
+      webhookSecret: webhookSecret?.trim() || getWebhookSecret(),
+      isLiveMode: Boolean(isLiveMode !== undefined ? isLiveMode : keyId.startsWith('rzp_live')),
+    };
+
+    const setting = await SystemSetting.findOneAndUpdate(
+      { key: 'razorpay' },
+      { value: payload, updatedBy: req.user._id },
+      { upsert: true, new: true }
+    );
+
+    // Apply immediately to runtime Razorpay instance
+    setDynamicConfig(payload);
+
+    // Audit log
+    await AuditLog.create({
+      action: 'UPDATE_RAZORPAY_KEYS',
+      adminId: req.user._id,
+      details: {
+        keyId: payload.keyId,
+        isLiveMode: payload.isLiveMode,
+      },
+      ipAddress: req.ip || '',
+    }).catch(() => null);
+
+    res.status(200).json({
+      success: true,
+      message: 'Razorpay keys updated successfully in database.',
+      settings: {
+        keyId: payload.keyId,
+        isLiveMode: payload.isLiveMode,
+        updatedAt: setting.updatedAt,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
+  getRazorpaySettings,
+  updateRazorpaySettings,
   getDashboardKpis,
   getVerificationQueue,
   getVerificationHistory,

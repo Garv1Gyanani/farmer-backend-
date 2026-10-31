@@ -33,35 +33,73 @@ const getPaymentConfig = async (req, res, next) => {
  */
 const createBookingPaymentOrder = async (req, res, next) => {
   try {
-    const { bookingId } = req.body;
-    if (!bookingId) {
-      return res.status(400).json({ success: false, message: 'bookingId is required.' });
-    }
+    const { bookingId, amount, serviceTitle, acreage } = req.body;
+    let totalAmount = 0;
+    let receipt = `rcpt_${Date.now()}`.slice(0, 40);
+    let notes = {};
+    let bookingMeta = null;
 
-    const booking = await Booking.findById(bookingId)
-      .populate('farmerId', 'name phone email')
-      .populate('serviceId', 'title');
+    if (bookingId) {
+      const booking = await Booking.findById(bookingId)
+        .populate('farmerId', 'name phone email')
+        .populate('serviceId', 'title');
 
-    if (!booking) {
-      return res.status(404).json({ success: false, message: 'Booking not found.' });
-    }
+      if (!booking) {
+        return res.status(404).json({ success: false, message: 'Booking not found.' });
+      }
 
-    const totalAmount = booking.pricing?.totalAmount || 0;
-    if (totalAmount <= 0) {
-      return res.status(400).json({ success: false, message: 'Invalid booking pricing amount.' });
-    }
+      totalAmount = booking.pricing?.totalAmount || 0;
+      if (totalAmount <= 0) {
+        return res.status(400).json({ success: false, message: 'Invalid booking pricing amount.' });
+      }
 
-    // Call Razorpay API to create live order
-    const orderData = await createRazorpayOrder({
-      amount: totalAmount,
-      receipt: `rcpt_${booking.bookingNumber}`,
-      notes: {
+      receipt = `rcpt_${booking.bookingNumber}`.slice(0, 40);
+      notes = {
         bookingId: booking._id.toString(),
         bookingNumber: booking.bookingNumber,
         serviceTitle: booking.serviceId?.title || 'Farm Machinery Service',
         farmerName: booking.farmerId?.name || '',
         farmerPhone: booking.farmerId?.phone || '',
-      },
+      };
+      bookingMeta = {
+        _id: booking._id,
+        bookingNumber: booking.bookingNumber,
+        serviceTitle: booking.serviceId?.title,
+        amount: totalAmount,
+        acreage: booking.parcelDetails?.acreage,
+        prefill: {
+          name: booking.farmerId?.name || '',
+          contact: booking.farmerId?.phone || '',
+          email: booking.farmerId?.email || '',
+        },
+      };
+    } else if (amount) {
+      totalAmount = Number(amount);
+      if (totalAmount <= 0) {
+        return res.status(400).json({ success: false, message: 'Invalid amount.' });
+      }
+      notes = {
+        serviceTitle: serviceTitle || 'Farm Machinery Service',
+        acreage: String(acreage || 3),
+        farmerId: req.user?._id?.toString() || '',
+      };
+    } else {
+      return res.status(400).json({ success: false, message: 'bookingId or amount is required.' });
+    }
+
+    // Call Razorpay API to create live order
+    const orderData = await createRazorpayOrder({
+      amount: totalAmount,
+      receipt,
+      notes,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Razorpay order created successfully',
+      keyId: getKeyId(),
+      order: orderData,
+      ...(bookingMeta ? { booking: bookingMeta } : {}),
     });
 
     res.status(200).json({

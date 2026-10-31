@@ -33,6 +33,8 @@ const {
   getVerificationHistory,
   getAdminProfile,
   updateAdminProfile,
+  getRazorpaySettings,
+  updateRazorpaySettings,
 } = require('../controllers/adminController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
@@ -42,6 +44,8 @@ router.use(protect, authorize('admin'));
 router.get('/kpis', getDashboardKpis);
 router.get('/profile', getAdminProfile);
 router.put('/profile', updateAdminProfile);
+router.get('/settings/razorpay', getRazorpaySettings);
+router.put('/settings/razorpay', updateRazorpaySettings);
 router.get('/verification/queue', getVerificationQueue);
 router.get('/verification/history', getVerificationHistory);
 router.put('/verification/:userRole/:targetId', processVerification);
