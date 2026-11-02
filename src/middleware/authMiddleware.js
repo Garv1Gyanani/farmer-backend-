@@ -62,4 +62,32 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize };
+const optionalProtect = async (req, res, next) => {
+  let token;
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith('Bearer ')
+  ) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+
+  if (!token) {
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || 'profarmer_super_secure_jwt_secret_key_2026_rural_saas'
+    );
+    const user = await User.findById(decoded.id);
+    if (user && user.status !== 'suspended') {
+      req.user = user;
+    }
+  } catch (err) {
+    // Continue unauthenticated if token invalid
+  }
+  next();
+};
+
+module.exports = { protect, optionalProtect, authorize };

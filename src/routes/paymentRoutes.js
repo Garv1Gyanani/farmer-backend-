@@ -8,13 +8,13 @@ const {
   verifyWalletTopup,
   handleRazorpayWebhook,
 } = require('../controllers/paymentController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, optionalProtect } = require('../middleware/authMiddleware');
 
 // Public Razorpay client configuration (Key ID & Currency)
 router.get('/config', getPaymentConfig);
 
-// Booking payments via Razorpay
-router.post('/booking/order', protect, createBookingPaymentOrder);
+// Booking payments via Razorpay (optionalProtect allows checkout init even if token refreshing)
+router.post('/booking/order', optionalProtect, createBookingPaymentOrder);
 router.post('/booking/verify', protect, verifyBookingPayment);
 
 // Wallet top-up via Razorpay
