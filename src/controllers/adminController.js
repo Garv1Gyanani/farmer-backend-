@@ -580,9 +580,10 @@ const getAllBookings = async (req, res, next) => {
 
     const total = await Booking.countDocuments(query);
     const bookings = await Booking.find(query)
-      .populate('farmerId', 'name phone email')
-      .populate('providerId', 'name phone')
-      .populate('serviceId', 'title machineryType')
+      .populate('farmerId', 'name phone email role village tehsil district')
+      .populate('providerId', 'name phone email role businessName')
+      .populate('agentId', 'name phone email role')
+      .populate('serviceId', 'title machineryType description pricingModel category')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(Number(limit));
