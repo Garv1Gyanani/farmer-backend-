@@ -10,6 +10,7 @@ const {
   fetchPaymentDetails,
 } = require('../services/razorpayService');
 const { emitToRole, emitToUser } = require('../socket/socketHandler');
+const { sendNotificationToUser, sendPushToTopic } = require('../services/fcmService');
 
 /**
  * 1. Get Public Razorpay Configuration for Client Apps
@@ -173,6 +174,30 @@ const verifyBookingPayment = async (req, res, next) => {
       village: booking.parcelDetails?.village,
       payout: booking.pricing.providerPayoutAmount,
     });
+
+    // Send FCM Push Notification to Farmer confirming booking & payment
+    sendNotificationToUser({
+      userId: booking.farmerId._id || booking.farmerId,
+      title: '✅ Booking Confirmed & Secured',
+      body: `Your payment of ₹${booking.pricing.totalAmount} is confirmed. We are broadcasting Booking #${booking.bookingNumber} to nearby providers.`,
+      type: 'booking_update',
+      data: {
+        bookingId: String(booking._id),
+        status: booking.status,
+      },
+    }).catch((err) => console.error('[FCM] Farmer booking confirmation error:', err));
+
+    // Send FCM Push Broadcast to all Providers
+    sendPushToTopic({
+      topic: 'providers_broadcast',
+      title: '🚨 New Machinery Request Available!',
+      body: `New request: ${booking.serviceId?.title || 'Machinery'} at ${booking.parcelDetails?.village || 'nearby'} (${booking.parcelDetails?.acreage || 1} acres). Tap to accept.`,
+      data: {
+        bookingId: String(booking._id),
+        bookingNumber: String(booking.bookingNumber),
+        type: 'dispatch_alert',
+      },
+    }).catch((err) => console.error('[FCM] Provider broadcast error:', err));
 
     res.status(200).json({
       success: true,

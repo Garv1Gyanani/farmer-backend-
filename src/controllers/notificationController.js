@@ -53,8 +53,47 @@ const markAllAsRead = async (req, res, next) => {
   }
 };
 
+// Register or update FCM device token
+const registerFcmToken = async (req, res, next) => {
+  try {
+    const { token, platform = 'android' } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'FCM token is required.' });
+    }
+
+    const User = require('../models/User');
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (!user.fcmTokens) {
+      user.fcmTokens = [];
+    }
+
+    // Check if token already exists for user
+    const existingIndex = user.fcmTokens.findIndex((t) => t.token === token);
+    if (existingIndex >= 0) {
+      user.fcmTokens[existingIndex].updatedAt = new Date();
+      user.fcmTokens[existingIndex].platform = platform;
+    } else {
+      user.fcmTokens.push({ token, platform, updatedAt: new Date() });
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'FCM token registered successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getNotifications,
   markAsRead,
   markAllAsRead,
+  registerFcmToken,
 };

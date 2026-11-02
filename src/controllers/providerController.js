@@ -12,6 +12,7 @@ const Review = require('../models/Review');
 const Notification = require('../models/Notification');
 const { uploadToS3 } = require('../services/s3Service');
 const { emitToUser, emitToRole, emitToBooking } = require('../socket/socketHandler');
+const { sendNotificationToUser } = require('../services/fcmService');
 
 // Provider Dashboard
 const getProviderDashboard = async (req, res, next) => {
@@ -210,6 +211,18 @@ const acceptJob = async (req, res, next) => {
       message: 'A machinery provider has accepted your service dispatch.',
     });
 
+    // Notify farmer via FCM Push
+    sendNotificationToUser({
+      userId: booking.farmerId,
+      title: '🚜 Provider Assigned!',
+      body: `${req.user.name} has accepted your booking #${booking.bookingNumber}. Machinery is preparing for dispatch.`,
+      type: 'booking_update',
+      data: {
+        bookingId: String(booking._id),
+        status: 'assigned',
+      },
+    }).catch((err) => console.error('[FCM] Provider assigned notify error:', err));
+
     // Notify booking room
     emitToBooking(booking._id, 'booking_assigned', {
       bookingId: booking._id,
@@ -262,6 +275,20 @@ const updateJobStatus = async (req, res, next) => {
       message: status === 'arrived' ? 'Provider has arrived! Please share your 4-digit OTP to start.' : 'Machinery is en-route to your parcel.',
     });
 
+    sendNotificationToUser({
+      userId: booking.farmerId,
+      title: status === 'arrived' ? '📍 Provider Arrived!' : '🚚 Machinery En Route',
+      body: status === 'arrived' 
+        ? `Provider has reached your farm parcel! Share your OTP (${booking.startOtp}) to begin operations.` 
+        : `Provider ${req.user.name} is en route to your field for Booking #${booking.bookingNumber}.`,
+      type: 'booking_update',
+      data: {
+        bookingId: String(booking._id),
+        status,
+        startOtp: String(booking.startOtp || ''),
+      },
+    }).catch((err) => console.error('[FCM] Status update notify error:', err));
+
     res.status(200).json({
       success: true,
       message: `Job status updated to ${status}`,
@@ -308,6 +335,17 @@ const verifyStartOtp = async (req, res, next) => {
       status: 'in_progress',
       message: 'Field work has officially commenced! Live acreage counter active.',
     });
+
+    sendNotificationToUser({
+      userId: booking.farmerId,
+      title: '⚙️ Work Commenced!',
+      body: `Field operation has started for Booking #${booking.bookingNumber}. You can track live acreage coverage.`,
+      type: 'booking_update',
+      data: {
+        bookingId: String(booking._id),
+        status: 'in_progress',
+      },
+    }).catch((err) => console.error('[FCM] In progress notify error:', err));
 
     res.status(200).json({
       success: true,
@@ -438,6 +476,28 @@ const completeJob = async (req, res, next) => {
       status: 'completed',
       message: 'Field work has been completed! Please review and rate your service.',
     });
+
+    sendNotificationToUser({
+      userId: booking.farmerId,
+      title: '🎉 Job Completed!',
+      body: `Work for Booking #${booking.bookingNumber} is completed! Your work certificate & invoice are ready. Tap to rate.`,
+      type: 'booking_update',
+      data: {
+        bookingId: String(booking._id),
+        status: 'completed',
+      },
+    }).catch((err) => console.error('[FCM] Completed notify error to farmer:', err));
+
+    sendNotificationToUser({
+      userId: req.user._id,
+      title: '💰 Payout Credited!',
+      body: `₹${providerPayout.toFixed(2)} has been credited to your Provider Wallet for Booking #${booking.bookingNumber}.`,
+      type: 'payout_update',
+      data: {
+        bookingId: String(booking._id),
+        payoutAmount: String(providerPayout),
+      },
+    }).catch((err) => console.error('[FCM] Completed notify error to provider:', err));
 
     res.status(200).json({
       success: true,
