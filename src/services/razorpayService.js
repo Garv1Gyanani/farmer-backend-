@@ -75,6 +75,7 @@ const createRazorpayOrder = async ({ amount, receipt, notes = {} }) => {
 
     return {
       success: true,
+      id: order.id,
       orderId: order.id,
       amount: order.amount, // in paise
       amountInRupees: order.amount / 100,

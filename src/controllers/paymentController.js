@@ -94,31 +94,12 @@ const createBookingPaymentOrder = async (req, res, next) => {
       notes,
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: 'Razorpay order created successfully',
       keyId: getKeyId(),
       order: orderData,
       ...(bookingMeta ? { booking: bookingMeta } : {}),
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Razorpay order created successfully',
-      keyId: getKeyId(),
-      order: orderData,
-      booking: {
-        _id: booking._id,
-        bookingNumber: booking.bookingNumber,
-        serviceTitle: booking.serviceId?.title,
-        amount: totalAmount,
-        acreage: booking.parcelDetails?.acreage,
-        prefill: {
-          name: booking.farmerId?.name || '',
-          contact: booking.farmerId?.phone || '',
-          email: booking.farmerId?.email || '',
-        },
-      },
     });
   } catch (error) {
     next(error);
