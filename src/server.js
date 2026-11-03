@@ -104,6 +104,7 @@ app.get('/api/health', (req, res) => {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/farmers', farmerRoutes);
+app.use('/api/farmer', farmerRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/providers', providerRoutes);
 app.use('/api/services', serviceRoutes);
