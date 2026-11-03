@@ -271,7 +271,11 @@ const verifyWalletTopup = async (req, res, next) => {
 
     let wallet = await Wallet.findOne({ userId: req.user._id });
     if (!wallet) {
-      wallet = await Wallet.create({ userId: req.user._id, balance: 0 });
+      wallet = await Wallet.create({
+        userId: req.user._id,
+        userRole: req.user.role || 'farmer',
+        balance: 0,
+      });
     }
 
     wallet.balance += numAmount;

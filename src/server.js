@@ -117,6 +117,7 @@ app.use('/api/weather', weatherRoutes);
 app.use('/api/maps', mapsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Initialize Automated Background Cron Jobs
 initCronJobs();

@@ -724,11 +724,12 @@ const processPayoutRequest = async (req, res, next) => {
 // 11. Global Ledger & Transactions
 const getAllTransactions = async (req, res, next) => {
   try {
-    const { userRole, type, page = 1, limit = 30 } = req.query;
+    const { userRole, type, userId, page = 1, limit = 50 } = req.query;
 
     let query = {};
     if (userRole && userRole !== 'all') query.userRole = userRole;
     if (type && type !== 'all') query.type = type;
+    if (userId) query.userId = userId;
 
     const total = await Transaction.countDocuments(query);
     const transactions = await Transaction.find(query)
@@ -1554,7 +1555,7 @@ const getFarmerDossier = async (req, res, next) => {
 
     const profile = await FarmerProfile.findOne({ userId: id }).populate('referredByAgentId', 'name phone email');
     const wallet = await Wallet.findOne({ userId: id });
-    const transactions = await Transaction.find({ userId: id }).sort({ createdAt: -1 }).limit(20);
+    const transactions = await Transaction.find({ userId: id }).sort({ createdAt: -1 });
     const bookings = await Booking.find({ farmerId: id })
       .populate('serviceId', 'title machineryType pricingModel basePrice imageUrl')
       .sort({ createdAt: -1 });
@@ -1690,7 +1691,7 @@ const createAgent = async (req, res, next) => {
 const updateAgent = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, phone, email, status, kycStatus, villages } = req.body;
+    const { name, phone, email, status, kycStatus, villages, district } = req.body;
 
     const user = await User.findById(id);
     if (!user || user.role !== 'agent') {
@@ -1712,7 +1713,7 @@ const updateAgent = async (req, res, next) => {
       if (villages) {
         profile.coverageClusters = (Array.isArray(villages) ? villages : [villages]).map((v) => ({
           villageName: typeof v === 'string' ? v.trim() : v.villageName,
-          district: profile.coverageClusters[0]?.district || 'Punjab',
+          district: district || profile.coverageClusters[0]?.district || 'Jaipur',
         }));
       }
       await profile.save();

@@ -121,6 +121,32 @@ const refundBooking = async (bookingId) => {
   }
   if (booking.payment.status !== 'escrow_locked') return { status: booking.payment.status };
 
+  if (booking.payment.method === 'wallet') {
+    let wallet = await Wallet.findOne({ userId: booking.farmerId });
+    if (!wallet) {
+      wallet = await Wallet.create({ userId: booking.farmerId, userRole: 'farmer', balance: 0 });
+    }
+    wallet.balance += booking.pricing.totalAmount;
+    await wallet.save();
+
+    await Transaction.create({
+      walletId: wallet._id,
+      userId: booking.farmerId,
+      userRole: 'farmer',
+      type: 'credit',
+      amount: booking.pricing.totalAmount,
+      balanceAfter: wallet.balance,
+      description: `Refund for cancelled booking #${booking.bookingNumber}`,
+      referenceType: 'refund',
+      referenceId: booking._id,
+      status: 'completed',
+    });
+
+    booking.payment.status = 'refunded';
+    await booking.save();
+    return { status: 'refunded' };
+  }
+
   const paymentId = booking.payment.transactionId;
   if (!paymentId || !paymentId.startsWith('pay_')) {
     booking.payment.status = 'refund_pending';

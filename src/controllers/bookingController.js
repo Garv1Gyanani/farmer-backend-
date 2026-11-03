@@ -4,6 +4,8 @@ const Service = require('../models/Service');
 const FarmerProfile = require('../models/FarmerProfile');
 const Review = require('../models/Review');
 const ProviderProfile = require('../models/ProviderProfile');
+const Wallet = require('../models/Wallet');
+const Transaction = require('../models/Transaction');
 const { generateInvoicePDF, generateWorkCertificatePDF } = require('../services/pdfService');
 const { emitToRole, emitToUser, broadcastEvent } = require('../socket/socketHandler');
 const {
@@ -244,6 +246,30 @@ const checkout = async (req, res, next) => {
       const bookingNumber = await generateBookingNumber();
       const startOtp = generateStartOtp();
 
+      if (paymentMethod === 'wallet') {
+        let wallet = await Wallet.findOne({ userId: req.user._id });
+        if (!wallet || wallet.balance < totalAmount) {
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient wallet balance. Total required: ₹${totalAmount}, Available: ₹${wallet ? wallet.balance : 0}.`,
+          });
+        }
+        wallet.balance -= totalAmount;
+        await wallet.save();
+
+        await Transaction.create({
+          walletId: wallet._id,
+          userId: req.user._id,
+          userRole: req.user.role || 'farmer',
+          type: 'debit',
+          amount: totalAmount,
+          balanceAfter: wallet.balance,
+          description: `Booking #${bookingNumber} (${service.title}) paid via Farmer Wallet`,
+          referenceType: 'booking',
+          status: 'completed',
+        });
+      }
+
       const booking = await Booking.create({
         bookingNumber,
         farmerId: req.user._id,
@@ -278,13 +304,15 @@ const checkout = async (req, res, next) => {
         payment: {
           method: paymentMethod || 'razorpay',
           status: 'escrow_locked',
-          transactionId: razorpayPaymentId || transactionId || `pay_${Date.now()}`,
+          transactionId: paymentMethod === 'wallet' ? `WLT_${Date.now()}` : (razorpayPaymentId || transactionId || `pay_${Date.now()}`),
           paidAt: new Date(),
         },
         timeline: [
           {
             status: 'pending_broadcast',
-            note: `Booking confirmed with payment authenticated via Razorpay (${razorpayPaymentId || transactionId || 'Verified'}). Dispatched to machinery provider.`,
+            note: paymentMethod === 'wallet'
+              ? `Booking confirmed with payment of ₹${totalAmount} authenticated via ProFarmer Agri-Wallet. Dispatched to machinery provider.`
+              : `Booking confirmed with payment authenticated via Razorpay (${razorpayPaymentId || transactionId || 'Verified'}). Dispatched to machinery provider.`,
             updatedBy: req.user._id,
           },
         ],
@@ -296,6 +324,39 @@ const checkout = async (req, res, next) => {
       const cart = await Cart.findOne({ farmerId: req.user._id }).populate('items.serviceId');
       if (!cart || cart.items.length === 0) {
         return res.status(400).json({ success: false, message: 'Cart is empty. Add services first.' });
+      }
+
+      let totalCartPayable = 0;
+      for (const item of cart.items) {
+        const units = item.acreage || 5;
+        const baseAmount = item.serviceId.basePrice * units;
+        const platformFee = Math.round(baseAmount * 0.05);
+        const taxes = Math.round(baseAmount * 0.05);
+        totalCartPayable += (baseAmount + platformFee + taxes);
+      }
+
+      if (paymentMethod === 'wallet') {
+        let wallet = await Wallet.findOne({ userId: req.user._id });
+        if (!wallet || wallet.balance < totalCartPayable) {
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient wallet balance. Total required: ₹${totalCartPayable}, Available: ₹${wallet ? wallet.balance : 0}.`,
+          });
+        }
+        wallet.balance -= totalCartPayable;
+        await wallet.save();
+
+        await Transaction.create({
+          walletId: wallet._id,
+          userId: req.user._id,
+          userRole: req.user.role || 'farmer',
+          type: 'debit',
+          amount: totalCartPayable,
+          balanceAfter: wallet.balance,
+          description: `Cart checkout for ${cart.items.length} service(s) paid via Farmer Wallet`,
+          referenceType: 'booking',
+          status: 'completed',
+        });
       }
 
       for (const item of cart.items) {
@@ -622,9 +683,6 @@ const confirmCompletion = async (req, res, next) => {
       booking: updatedBooking,
     });
   } catch (error) {
-    next(error);
-  }
-};
     next(error);
   }
 };
