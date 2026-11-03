@@ -373,6 +373,25 @@ const requestOtp = async (req, res, next) => {
           message: `This ${isEmail ? 'email' : 'phone number'} is already registered as a ${getRoleLabel(existingUser.role)}. Please open the ${getRoleLabel(existingUser.role)} app to login.`,
         });
       }
+
+      // STRICT AUTHORIZATION CHECK FOR FIELD AGENTS:
+      // Field agents MUST be created/onboarded by an Administrator in the Admin Panel first.
+      if (role === 'agent') {
+        if (!existingUser || existingUser.role !== 'agent') {
+          return res.status(403).json({
+            success: false,
+            unauthorizedAgent: true,
+            message: 'Access restricted. No field agent account was found for this phone number. Please contact your platform administrator to be onboarded as an authorized agent.',
+          });
+        }
+        if (existingUser.status === 'suspended') {
+          return res.status(403).json({
+            success: false,
+            accountSuspended: true,
+            message: 'Your field agent account has been suspended. Please contact platform administration.',
+          });
+        }
+      }
     }
 
     const dynamicOtp = String(Math.floor(100000 + Math.random() * 900000));
@@ -469,9 +488,27 @@ const verifyOtp = async (req, res, next) => {
       });
     }
 
+    // STRICT AUTHORIZATION CHECK FOR FIELD AGENTS:
+    if (role === 'agent') {
+      if (!user || user.role !== 'agent') {
+        return res.status(403).json({
+          success: false,
+          unauthorizedAgent: true,
+          message: 'Access denied. Only administrator-authorized field agents can access this application.',
+        });
+      }
+      if (user.status === 'suspended') {
+        return res.status(403).json({
+          success: false,
+          accountSuspended: true,
+          message: 'Your field agent account has been suspended. Please contact platform administration.',
+        });
+      }
+    }
+
     const isNewUser = !user;
     if (!user) {
-      // Auto-register via OTP
+      // Auto-register via OTP (Only farmers and providers can self-register via OTP)
       user = await User.create({
         name: name || `User ${cleanPhone.slice(-4)}`,
         phone: cleanPhone,
@@ -486,9 +523,6 @@ const verifyOtp = async (req, res, next) => {
           farmName: `${user.name}'s Farm`,
           parcels: [{ name: 'Primary Parcel', acreage: 5 }],
         });
-      } else if (role === 'agent') {
-        const agentCode = `AG-${Math.floor(1000 + Math.random() * 9000)}`;
-        await AgentProfile.create({ userId: user._id, agentCode });
       } else if (role === 'provider') {
         const contractorId = `PR-${Math.floor(10000 + Math.random() * 90000)}`;
         await ProviderProfile.create({
@@ -507,7 +541,18 @@ const verifyOtp = async (req, res, next) => {
 
     let profile = null;
     if (user.role === 'farmer') profile = await FarmerProfile.findOne({ userId: user._id });
-    if (user.role === 'agent') profile = await AgentProfile.findOne({ userId: user._id });
+    if (user.role === 'agent') {
+      profile = await AgentProfile.findOne({ userId: user._id });
+      if (!profile) {
+        const agentCode = `AG-${Math.floor(1000 + Math.random() * 9000)}`;
+        profile = await AgentProfile.create({
+          userId: user._id,
+          agentCode,
+          coverageClusters: [{ villageName: 'Amber Tehsil', district: 'Jaipur', farmerCount: 0 }],
+          kycStatus: 'approved',
+        });
+      }
+    }
     if (user.role === 'provider') profile = await ProviderProfile.findOne({ userId: user._id });
 
     const wallet = await Wallet.findOne({ userId: user._id });
