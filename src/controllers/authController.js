@@ -316,6 +316,23 @@ const login = async (req, res, next) => {
       profile = await ProviderProfile.findOne({ userId: user._id });
     }
 
+    // Save FCM Token if provided in verifyOtp payload
+    if (req.body.fcmToken) {
+      if (!user.fcmTokens) user.fcmTokens = [];
+      const tokenIdx = user.fcmTokens.findIndex((t) => t.token === req.body.fcmToken);
+      if (tokenIdx >= 0) {
+        user.fcmTokens[tokenIdx].updatedAt = new Date();
+        user.fcmTokens[tokenIdx].platform = req.body.platform || 'android';
+      } else {
+        user.fcmTokens.push({
+          token: req.body.fcmToken,
+          platform: req.body.platform || 'android',
+          updatedAt: new Date(),
+        });
+      }
+      await user.save();
+    }
+
     const wallet = await Wallet.findOne({ userId: user._id });
     const token = generateToken(user);
 
@@ -554,6 +571,23 @@ const verifyOtp = async (req, res, next) => {
       }
     }
     if (user.role === 'provider') profile = await ProviderProfile.findOne({ userId: user._id });
+
+    // Save FCM Token if provided in verifyOtp payload
+    if (req.body.fcmToken) {
+      if (!user.fcmTokens) user.fcmTokens = [];
+      const tokenIdx = user.fcmTokens.findIndex((t) => t.token === req.body.fcmToken);
+      if (tokenIdx >= 0) {
+        user.fcmTokens[tokenIdx].updatedAt = new Date();
+        user.fcmTokens[tokenIdx].platform = req.body.platform || 'android';
+      } else {
+        user.fcmTokens.push({
+          token: req.body.fcmToken,
+          platform: req.body.platform || 'android',
+          updatedAt: new Date(),
+        });
+      }
+      await user.save();
+    }
 
     const wallet = await Wallet.findOne({ userId: user._id });
     const token = generateToken(user);
