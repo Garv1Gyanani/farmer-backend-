@@ -26,6 +26,15 @@ const generateStartOtp = () => {
   return String(Math.floor(1000 + Math.random() * 9000));
 };
 
+const normalizeTimeSlot = (s) => {
+  if (!s) return 'morning';
+  const str = String(s).toLowerCase();
+  if (str.includes('morning')) return 'morning';
+  if (str.includes('afternoon')) return 'afternoon';
+  if (str.includes('full')) return 'full_day';
+  return 'morning';
+};
+
 // Helper to generate booking number
 const generateBookingNumber = async () => {
   const count = await Booking.countDocuments();
@@ -89,7 +98,7 @@ const addToCart = async (req, res, next) => {
       parcelName: parcelName || 'Main Field Parcel',
       acreage: units,
       scheduledDate: scheduledDate ? new Date(scheduledDate) : new Date(Date.now() + 86400000),
-      timeSlot: timeSlot || 'morning',
+      timeSlot: normalizeTimeSlot(timeSlot),
       approachRoadNotes: approachRoadNotes || '',
       unitPrice,
       estimatedTotal,
@@ -252,7 +261,7 @@ const checkout = async (req, res, next) => {
           location: farmerProfile?.location || { type: 'Point', coordinates: [75.7873, 26.9124] },
         },
         scheduledDate: scheduledDate ? new Date(scheduledDate) : new Date(Date.now() + 86400000),
-        timeSlot: timeSlot || 'Morning Slot',
+        timeSlot: normalizeTimeSlot(timeSlot),
         status: 'pending_broadcast',
         startOtp,
         pricing: {
@@ -315,7 +324,7 @@ const checkout = async (req, res, next) => {
             location: farmerProfile?.location || { type: 'Point', coordinates: [75.8573, 30.901] },
           },
           scheduledDate: item.scheduledDate,
-          timeSlot: item.timeSlot,
+          timeSlot: normalizeTimeSlot(item.timeSlot),
           status: 'pending_broadcast',
           startOtp,
           pricing: {
