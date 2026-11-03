@@ -653,6 +653,23 @@ const updateProfile = async (req, res, next) => {
     if (preferredLanguage) user.preferredLanguage = preferredLanguage;
     if (avatarUrl) user.avatarUrl = avatarUrl;
 
+    // Handle FCM Token registration on profile update
+    if (req.body.fcmToken || req.body.token) {
+      const incomingToken = req.body.fcmToken || req.body.token;
+      if (!user.fcmTokens) user.fcmTokens = [];
+      const tokenIdx = user.fcmTokens.findIndex((t) => t.token === incomingToken);
+      if (tokenIdx >= 0) {
+        user.fcmTokens[tokenIdx].updatedAt = new Date();
+        user.fcmTokens[tokenIdx].platform = req.body.platform || 'android';
+      } else {
+        user.fcmTokens.push({
+          token: incomingToken,
+          platform: req.body.platform || 'android',
+          updatedAt: new Date(),
+        });
+      }
+    }
+
     await user.save();
 
     if (user.role === 'provider') {
