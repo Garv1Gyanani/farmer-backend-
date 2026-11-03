@@ -35,6 +35,8 @@ const {
   updateAdminProfile,
   getRazorpaySettings,
   updateRazorpaySettings,
+  sendAdminNotification,
+  getAdminNotificationHistory,
 } = require('../controllers/adminController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
@@ -46,6 +48,11 @@ router.get('/profile', getAdminProfile);
 router.put('/profile', updateAdminProfile);
 router.get('/settings/razorpay', getRazorpaySettings);
 router.put('/settings/razorpay', updateRazorpaySettings);
+
+// Broadcast & Direct Push Notifications
+router.post('/notifications/send', sendAdminNotification);
+router.get('/notifications/history', getAdminNotificationHistory);
+
 router.get('/verification/queue', getVerificationQueue);
 router.get('/verification/history', getVerificationHistory);
 router.put('/verification/:userRole/:targetId', processVerification);

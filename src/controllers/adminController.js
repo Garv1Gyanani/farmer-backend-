@@ -1973,9 +1973,145 @@ const updateRazorpaySettings = async (req, res, next) => {
   }
 };
 
+/**
+ * Send Push Broadcast or Individual Notifications from Admin Console
+ */
+const sendAdminNotification = async (req, res, next) => {
+  try {
+    const { targetType, targetRole, userId, title, body, extraData = {} } = req.body;
+
+    if (!title || !body) {
+      return res.status(400).json({ success: false, message: 'Notification title and body are required.' });
+    }
+
+    const { sendPushToTokens, sendPushToTopic } = require('../services/fcmService');
+    const Notification = require('../models/Notification');
+    const User = require('../models/User');
+
+    let recipientUsers = [];
+    let dispatchType = '';
+
+    if (targetType === 'individual') {
+      if (!userId) {
+        return res.status(400).json({ success: false, message: 'User ID is required for individual notification.' });
+      }
+      const targetUser = await User.findById(userId);
+      if (!targetUser) {
+        return res.status(404).json({ success: false, message: 'Target user not found.' });
+      }
+      recipientUsers = [targetUser];
+      dispatchType = `individual (${targetUser.name} - ${targetUser.role})`;
+    } else if (targetType === 'role') {
+      if (!['farmer', 'agent', 'provider'].includes(targetRole)) {
+        return res.status(400).json({ success: false, message: 'Valid target role required: farmer, agent, or provider.' });
+      }
+      recipientUsers = await User.find({ role: targetRole, status: { $ne: 'suspended' } });
+      dispatchType = `role: ${targetRole} (${recipientUsers.length} users)`;
+    } else if (targetType === 'all') {
+      recipientUsers = await User.find({ role: { $in: ['farmer', 'agent', 'provider'] }, status: { $ne: 'suspended' } });
+      dispatchType = `all broadcast (${recipientUsers.length} users)`;
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid targetType. Choose: individual, role, or all.' });
+    }
+
+    // 1. Create in-app notification records for all recipients in DB
+    const notificationDocs = recipientUsers.map((u) => ({
+      recipientId: u._id,
+      recipientRole: u.role,
+      title,
+      body,
+      type: 'system_alert',
+      data: { ...extraData, sender: 'Admin Console' },
+      isRead: false,
+    }));
+
+    if (notificationDocs.length > 0) {
+      await Notification.insertMany(notificationDocs);
+    }
+
+    // 2. Collect all active FCM tokens
+    const allTokens = [];
+    recipientUsers.forEach((u) => {
+      if (u.fcmTokens && Array.isArray(u.fcmTokens)) {
+        u.fcmTokens.forEach((t) => {
+          if (t.token) allTokens.push(t.token);
+        });
+      }
+    });
+
+    const uniqueTokens = [...new Set(allTokens)];
+    let pushResult = { success: true, count: uniqueTokens.length };
+
+    // 3. Dispatch multicast push via FCM
+    if (uniqueTokens.length > 0) {
+      pushResult = await sendPushToTokens({
+        tokens: uniqueTokens,
+        title,
+        body,
+        data: {
+          type: 'system_alert',
+          ...extraData,
+        },
+      });
+    }
+
+    // Log action to audit log
+    await AuditLog.create({
+      adminId: req.user._id,
+      adminEmail: req.user.email,
+      action: 'notification_sent',
+      targetType: targetType === 'individual' ? 'user' : 'broadcast',
+      targetId: targetType === 'individual' ? userId : req.user._id,
+      details: {
+        dispatchType,
+        title,
+        recipientsCount: recipientUsers.length,
+        devicesPushed: uniqueTokens.length,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Notification successfully sent to ${dispatchType}!`,
+      stats: {
+        recipientsCount: recipientUsers.length,
+        devicesPushed: uniqueTokens.length,
+        pushResult,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get Notification Dispatch History & Stats for Admin Panel
+ */
+const getAdminNotificationHistory = async (req, res, next) => {
+  try {
+    const Notification = require('../models/Notification');
+    const recentNotifications = await Notification.find({ type: 'system_alert' })
+      .populate('recipientId', 'name phone role')
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    const totalSent = await Notification.countDocuments({ type: 'system_alert' });
+
+    res.status(200).json({
+      success: true,
+      totalSent,
+      notifications: recentNotifications,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getRazorpaySettings,
   updateRazorpaySettings,
+  sendAdminNotification,
+  getAdminNotificationHistory,
   getDashboardKpis,
   getVerificationQueue,
   getVerificationHistory,
