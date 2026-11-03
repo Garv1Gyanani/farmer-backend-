@@ -2059,9 +2059,11 @@ const sendAdminNotification = async (req, res, next) => {
     await AuditLog.create({
       adminId: req.user._id,
       adminEmail: req.user.email,
-      action: 'notification_sent',
-      targetType: targetType === 'individual' ? 'user' : 'broadcast',
-      targetId: targetType === 'individual' ? userId : req.user._id,
+      action: 'NOTIFICATION_BROADCAST',
+      targetType: targetType === 'individual' && ['farmer', 'agent', 'provider'].includes(recipientUsers[0]?.role)
+        ? recipientUsers[0].role
+        : 'system',
+      targetId: targetType === 'individual' && userId ? userId : req.user._id,
       details: {
         dispatchType,
         title,
