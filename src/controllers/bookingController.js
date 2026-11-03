@@ -11,6 +11,15 @@ const {
   verifyPaymentSignature,
   getKeyId,
 } = require('../services/razorpayService');
+const { STATUS, transitionBooking } = require('../services/bookingStateMachine');
+const {
+  EVENTS,
+  notifyUser,
+  notifyAdmins,
+  notifyProvidersForBooking,
+  broadcastBookingUpdate,
+} = require('../services/notificationService');
+const { settleBooking, refundBooking } = require('../services/bookingSettlement');
 
 // Helper to generate 4-digit OTP
 const generateStartOtp = () => {
@@ -367,6 +376,34 @@ const checkout = async (req, res, next) => {
         farmerName: req.user.name,
         totalAmount: b.pricing.totalAmount,
       });
+
+      // Persistent event-driven notifications
+      await notifyUser({
+        userId: b.farmerId,
+        bookingId: b._id,
+        eventType: EVENTS.BOOKING_CREATED,
+        title: '📋 Booking Received!',
+        message: `Your booking #${b.bookingNumber} has been received. Broadcasting to nearby providers.`,
+        data: { bookingId: String(b._id), status: b.status },
+      }).catch((e) => console.warn('[Notify] Booking created farmer err:', e.message));
+
+      await notifyAdmins({
+        bookingId: b._id,
+        eventType: EVENTS.BOOKING_CREATED,
+        title: 'New Booking Created',
+        message: `Farmer ${req.user.name} created booking #${b.bookingNumber} (₹${b.pricing.totalAmount}).`,
+        data: { bookingId: String(b._id), totalAmount: b.pricing.totalAmount },
+      }).catch((e) => console.warn('[Notify] Booking created admin err:', e.message));
+
+      await notifyProvidersForBooking(b, {
+        bookingId: b._id,
+        eventType: EVENTS.BOOKING_CREATED,
+        title: '🚜 New Machinery Request!',
+        message: `New dispatch available in ${b.parcelDetails.village || b.parcelDetails.tehsil}: ${b.parcelDetails.acreage} acres (₹${b.pricing.providerPayoutAmount}).`,
+        data: { bookingId: String(b._id) },
+      }).catch((e) => console.warn('[Notify] Booking created providers err:', e.message));
+
+      broadcastBookingUpdate(b);
     }
 
     res.status(201).json({
@@ -383,12 +420,19 @@ const checkout = async (req, res, next) => {
 const getBookingDetails = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const booking = await Booking.findById(id)
+    let query = Booking.findById(id)
       .populate('serviceId')
       .populate('farmerId', 'name phone avatarUrl')
       .populate('providerId', 'name phone avatarUrl')
       .populate('agentId', 'name phone');
 
+    // If farmer or admin, select completionOtp so farmer can view and confirm it
+    const bookingDoc = await Booking.findById(id).select('farmerId status');
+    if (bookingDoc && (String(bookingDoc.farmerId) === String(req.user._id) || req.user.role === 'admin')) {
+      query = query.select('+completionOtp');
+    }
+
+    const booking = await query;
     if (!booking) {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
@@ -428,42 +472,150 @@ const getLiveTracking = async (req, res, next) => {
 const cancelBooking = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason = 'Cancelled by user' } = req.body;
 
     const booking = await Booking.findById(id);
     if (!booking) {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
 
-    if (['in_progress', 'completed'].includes(booking.status)) {
+    if ([STATUS.IN_PROGRESS, STATUS.COMPLETION_PENDING, STATUS.COMPLETED].includes(booking.status)) {
       return res.status(400).json({
         success: false,
         message: `Cannot cancel a booking that is currently ${booking.status}.`,
       });
     }
 
-    booking.status = 'cancelled';
-    booking.cancellationReason = reason || 'Cancelled by user';
-    booking.payment.status = 'refunded';
-    booking.timeline.push({
-      status: 'cancelled',
-      note: `Booking cancelled: ${booking.cancellationReason}`,
-      updatedBy: req.user._id,
+    const updatedBooking = await transitionBooking({
+      bookingId: id,
+      to: STATUS.CANCELLED,
+      actor: req.user,
+      note: `Booking cancelled: ${reason}`,
+      set: {
+        cancellationReason: reason,
+        'payment.status': 'refunded',
+      },
     });
 
-    await booking.save();
+    // Handle refund
+    await refundBooking(id);
 
-    // Alert participants
-    if (booking.providerId) {
-      emitToUser(booking.providerId, 'booking_cancelled', { bookingId: booking._id });
+    // Notify participants
+    if (updatedBooking.providerId) {
+      await notifyUser({
+        userId: updatedBooking.providerId,
+        bookingId: updatedBooking._id,
+        eventType: EVENTS.BOOKING_CANCELLED,
+        title: 'Booking Cancelled',
+        message: `Booking #${updatedBooking.bookingNumber} was cancelled.`,
+        data: { bookingId: String(updatedBooking._id) },
+      });
     }
+
+    await notifyAdmins({
+      bookingId: updatedBooking._id,
+      eventType: EVENTS.BOOKING_CANCELLED,
+      title: 'Booking Cancelled',
+      message: `Booking #${updatedBooking.bookingNumber} cancelled by ${req.user.name}.`,
+      data: { bookingId: String(updatedBooking._id), reason },
+    });
+
+    broadcastBookingUpdate(updatedBooking, { cancellationReason: reason });
 
     res.status(200).json({
       success: true,
       message: 'Booking cancelled successfully. Any pre-authorized escrow payment refunded.',
-      booking,
+      booking: updatedBooking,
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// Confirm work completion with OTP (called by Farmer or Admin)
+const confirmCompletion = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { otp } = req.body;
+
+    if (!otp) {
+      return res.status(400).json({ success: false, message: 'Completion OTP is required.' });
+    }
+
+    const booking = await Booking.findById(id).select('+completionOtp');
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    const isFarmer = String(booking.farmerId) === String(req.user._id);
+    const isAdmin = req.user.role === 'admin';
+    const isProvider = booking.providerId && String(booking.providerId) === String(req.user._id);
+
+    if (!isFarmer && !isAdmin && !isProvider) {
+      return res.status(403).json({ success: false, message: 'Not authorized to confirm this booking.' });
+    }
+
+    if (booking.status === STATUS.COMPLETED) {
+      return res.status(400).json({ success: false, message: 'Booking has already been completed.' });
+    }
+
+    if (booking.completionOtp && booking.completionOtp !== String(otp).trim()) {
+      return res.status(400).json({ success: false, message: 'Invalid confirmation OTP.' });
+    }
+
+    const updatedBooking = await transitionBooking({
+      bookingId: id,
+      to: STATUS.COMPLETED,
+      actor: req.user,
+      note: `Field work completion confirmed via OTP by ${req.user.name} (${req.user.role})`,
+      set: {
+        'completionSignoff.completedAt': new Date(),
+      },
+    });
+
+    // Execute atomic wallet settlement
+    await settleBooking(id);
+
+    // Send persistent notifications
+    await notifyUser({
+      userId: updatedBooking.farmerId,
+      bookingId: updatedBooking._id,
+      eventType: EVENTS.COMPLETION_CONFIRMED,
+      title: '🎉 Booking Complete!',
+      message: `Your booking #${updatedBooking.bookingNumber} is verified and completed. Thank you for choosing ProFarmer!`,
+      data: { bookingId: String(updatedBooking._id), status: STATUS.COMPLETED },
+    });
+
+    if (updatedBooking.providerId) {
+      await notifyUser({
+        userId: updatedBooking.providerId,
+        bookingId: updatedBooking._id,
+        eventType: EVENTS.COMPLETION_CONFIRMED,
+        title: '💰 Payout Settled!',
+        message: `Farmer verified completion for #${updatedBooking.bookingNumber}. Payout credited to your wallet.`,
+        data: { bookingId: String(updatedBooking._id), status: STATUS.COMPLETED },
+      });
+    }
+
+    await notifyAdmins({
+      bookingId: updatedBooking._id,
+      eventType: EVENTS.COMPLETION_CONFIRMED,
+      title: 'Booking Completed & Settled',
+      message: `Booking #${updatedBooking.bookingNumber} completed and settled.`,
+      data: { bookingId: String(updatedBooking._id) },
+    });
+
+    broadcastBookingUpdate(updatedBooking);
+
+    res.status(200).json({
+      success: true,
+      message: 'Work completion confirmed and payment settled successfully.',
+      booking: updatedBooking,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
     next(error);
   }
 };
@@ -713,6 +865,7 @@ module.exports = {
   getBookingDetails,
   getLiveTracking,
   cancelBooking,
+  confirmCompletion,
   rateBooking,
   downloadInvoice,
   downloadWorkCertificate,

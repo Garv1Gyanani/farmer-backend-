@@ -303,7 +303,7 @@ const getFarmerBookings = async (req, res, next) => {
     let query = { farmerId: req.user._id };
 
     if (status === 'active') {
-      query.status = { $in: ['pending_broadcast', 'assigned', 'en_route', 'arrived', 'in_progress'] };
+      query.status = { $in: ['pending_broadcast', 'assigned', 'in_progress', 'completion_pending'] };
     } else if (status === 'completed') {
       query.status = 'completed';
     } else if (status === 'cancelled') {
@@ -311,6 +311,7 @@ const getFarmerBookings = async (req, res, next) => {
     }
 
     const bookings = await Booking.find(query)
+      .select('+completionOtp')
       .populate('serviceId')
       .populate('providerId', 'name phone avatarUrl')
       .sort({ createdAt: -1 });
@@ -340,8 +341,9 @@ const getFarmerHomeFeed = async (req, res, next) => {
     // 1. Fetch active/in-progress booking if any
     const activeBooking = await Booking.findOne({
       farmerId: user._id,
-      status: { $in: ['pending_broadcast', 'assigned', 'en_route', 'arrived', 'in_progress'] },
+      status: { $in: ['pending_broadcast', 'assigned', 'in_progress', 'completion_pending'] },
     })
+      .select('+completionOtp')
       .populate('serviceId')
       .populate('providerId', 'name phone avatarUrl')
       .sort({ createdAt: -1 });

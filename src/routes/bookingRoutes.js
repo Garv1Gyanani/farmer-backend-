@@ -9,6 +9,7 @@ const {
   getBookingDetails,
   getLiveTracking,
   cancelBooking,
+  confirmCompletion,
   rateBooking,
   downloadInvoice,
   downloadWorkCertificate,
@@ -33,6 +34,7 @@ router.get('/:id/tracking', getLiveTracking);
 router.post('/:id/payment/order', createPaymentOrder);
 router.post('/:id/payment/verify', verifyPayment);
 router.post('/:id/cancel', cancelBooking);
+router.post('/:id/confirm-completion', confirmCompletion);
 router.post('/:id/rate', rateBooking);
 
 module.exports = router;

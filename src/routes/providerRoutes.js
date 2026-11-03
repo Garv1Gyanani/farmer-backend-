@@ -7,9 +7,11 @@ const {
   addMachinery,
   getJobs,
   acceptJob,
+  rejectJob,
   updateJobStatus,
   verifyStartOtp,
   completeJob,
+  verifyCompletionOtp,
   getEarnings,
   requestPayout,
   getReviews,
@@ -41,9 +43,11 @@ router.get('/jobs', getJobs);
 router.get('/demand-map', getDemandHeatmap);
 router.post('/kyc/upload', upload.single('document'), uploadProviderKyc);
 router.post('/jobs/:bookingId/accept', acceptJob);
+router.post('/jobs/:bookingId/reject', rejectJob);
 router.put('/jobs/:bookingId/status', updateJobStatus);
 router.post('/jobs/:bookingId/verify-otp', verifyStartOtp);
 router.post('/jobs/:bookingId/complete', completeJob);
+router.post('/jobs/:bookingId/verify-completion-otp', verifyCompletionOtp);
 router.get('/earnings', getEarnings);
 router.post('/earnings/withdraw', requestPayout);
 router.get('/reviews', getReviews);

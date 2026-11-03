@@ -13,6 +13,14 @@ const Notification = require('../models/Notification');
 const { uploadToS3 } = require('../services/s3Service');
 const { emitToUser, emitToRole, emitToBooking } = require('../socket/socketHandler');
 const { sendNotificationToUser } = require('../services/fcmService');
+const { STATUS, transitionBooking } = require('../services/bookingStateMachine');
+const {
+  EVENTS,
+  notifyUser,
+  notifyAdmins,
+  broadcastBookingUpdate,
+} = require('../services/notificationService');
+const { settleBooking } = require('../services/bookingSettlement');
 
 // Provider Dashboard
 const getProviderDashboard = async (req, res, next) => {
@@ -24,19 +32,20 @@ const getProviderDashboard = async (req, res, next) => {
 
     const wallet = await Wallet.findOne({ userId: req.user._id });
 
-    // Urgent requests: bookings waiting for dispatch
+    // Urgent requests: bookings waiting for dispatch (excluding those this provider declined)
     const urgentRequests = await Booking.find({
-      status: 'pending_broadcast',
+      status: STATUS.PENDING,
+      'rejections.providerId': { $ne: req.user._id },
     })
       .populate('serviceId', 'title machineryType pricingModel basePrice')
       .populate('farmerId', 'name phone')
       .sort({ createdAt: -1 })
       .limit(5);
 
-    // Active ongoing jobs
+    // Active ongoing jobs (assigned, in_progress, completion_pending)
     const activeJobs = await Booking.find({
       providerId: req.user._id,
-      status: { $in: ['assigned', 'en_route', 'arrived', 'in_progress'] },
+      status: { $in: [STATUS.ACCEPTED, STATUS.IN_PROGRESS, STATUS.COMPLETION_PENDING] },
     }).populate('serviceId');
 
     res.status(200).json({
@@ -146,16 +155,19 @@ const getJobs = async (req, res, next) => {
 
     let query = {};
     if (tab === 'new_requests') {
-      query = { status: 'pending_broadcast' };
+      query = {
+        status: STATUS.PENDING,
+        'rejections.providerId': { $ne: req.user._id },
+      };
     } else if (tab === 'ongoing') {
       query = {
         providerId: req.user._id,
-        status: { $in: ['assigned', 'en_route', 'arrived', 'in_progress'] },
+        status: { $in: [STATUS.ACCEPTED, STATUS.IN_PROGRESS, STATUS.COMPLETION_PENDING] },
       };
     } else if (tab === 'completed') {
       query = {
         providerId: req.user._id,
-        status: 'completed',
+        status: STATUS.COMPLETED,
       };
     } else {
       query = { providerId: req.user._id };
@@ -180,50 +192,54 @@ const getJobs = async (req, res, next) => {
 const acceptJob = async (req, res, next) => {
   try {
     const { bookingId } = req.params;
-    const booking = await Booking.findById(bookingId);
 
-    if (!booking) {
-      return res.status(404).json({ success: false, message: 'Booking not found.' });
-    }
-
-    if (booking.status !== 'pending_broadcast') {
-      return res.status(400).json({
-        success: false,
-        message: 'This booking is no longer available. Another provider may have accepted it.',
-      });
-    }
-
-    booking.providerId = req.user._id;
-    booking.status = 'assigned';
-    booking.timeline.push({
-      status: 'assigned',
+    // Atomically transition from PENDING -> ACCEPTED with concurrency check
+    const booking = await transitionBooking({
+      bookingId,
+      to: STATUS.ACCEPTED,
+      actor: req.user,
       note: `Dispatch accepted by provider ${req.user.name}`,
-      updatedBy: req.user._id,
+      from: [STATUS.PENDING],
+      set: {
+        providerId: req.user._id,
+        acceptedBy: req.user._id,
+        acceptedAt: new Date(),
+      },
     });
 
-    await booking.save();
+    await booking.populate('serviceId');
+    await booking.populate('farmerId', 'name phone avatarUrl');
 
-    // Notify farmer via Socket.IO
-    emitToUser(booking.farmerId, 'booking_status_updated', {
+    // Notify farmer via persistent notification, socket, and FCM
+    await notifyUser({
+      userId: booking.farmerId?._id || booking.farmerId,
       bookingId: booking._id,
-      status: 'assigned',
-      providerName: req.user.name,
-      message: 'A machinery provider has accepted your service dispatch.',
-    });
-
-    // Notify farmer via FCM Push
-    sendNotificationToUser({
-      userId: booking.farmerId,
-      title: '🚜 Provider Assigned!',
-      body: `${req.user.name} has accepted your booking #${booking.bookingNumber}. Machinery is preparing for dispatch.`,
-      type: 'booking_update',
+      eventType: EVENTS.BOOKING_ACCEPTED,
+      title: '🚜 Provider Confirmed!',
+      message: `${req.user.name} has accepted your booking #${booking.bookingNumber}. Machinery is preparing for dispatch.`,
       data: {
         bookingId: String(booking._id),
-        status: 'assigned',
+        status: STATUS.ACCEPTED,
       },
-    }).catch((err) => console.error('[FCM] Provider assigned notify error:', err));
+    });
 
-    // Notify booking room
+    // Notify Admins
+    await notifyAdmins({
+      bookingId: booking._id,
+      eventType: EVENTS.BOOKING_ACCEPTED,
+      title: 'Booking Accepted',
+      message: `Provider ${req.user.name} accepted booking #${booking.bookingNumber}.`,
+      data: {
+        bookingId: String(booking._id),
+        providerId: String(req.user._id),
+      },
+    });
+
+    // Broadcast live state update to all dashboards (admin, provider, farmer)
+    broadcastBookingUpdate(booking, {
+      providerName: req.user.name,
+    });
+
     emitToBooking(booking._id, 'booking_assigned', {
       bookingId: booking._id,
       providerId: req.user._id,
@@ -240,58 +256,109 @@ const acceptJob = async (req, res, next) => {
   }
 };
 
-// Update machinery dispatch status (e.g. en_route, arrived)
+// Reject / Decline Job
+const rejectJob = async (req, res, next) => {
+  try {
+    const { bookingId } = req.params;
+    const { reason = 'Not available at requested time' } = req.body;
+
+    const currentBooking = await Booking.findById(bookingId);
+    if (!currentBooking) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    const rejectionEntry = {
+      providerId: req.user._id,
+      reason,
+      timestamp: new Date(),
+    };
+
+    let updatedBooking;
+    // If specifically assigned to this provider, transition to rejected for admin reallocation
+    if (currentBooking.providerId && String(currentBooking.providerId) === String(req.user._id)) {
+      updatedBooking = await transitionBooking({
+        bookingId,
+        to: STATUS.REJECTED,
+        actor: req.user,
+        note: `Job declined by assigned provider ${req.user.name}: ${reason}`,
+        push: { rejections: rejectionEntry },
+        set: { providerId: null },
+      });
+    } else {
+      // Record rejection in broadcast pool so this provider will no longer see it
+      updatedBooking = await Booking.findByIdAndUpdate(
+        bookingId,
+        {
+          $push: { rejections: rejectionEntry },
+        },
+        { new: true }
+      );
+    }
+
+    // Notify Admins
+    await notifyAdmins({
+      bookingId: updatedBooking._id,
+      eventType: EVENTS.BOOKING_REJECTED,
+      title: 'Provider Declined Job',
+      message: `Provider ${req.user.name} declined booking #${updatedBooking.bookingNumber}. Reason: ${reason}`,
+      data: {
+        bookingId: String(updatedBooking._id),
+        providerId: String(req.user._id),
+        reason,
+      },
+    });
+
+    broadcastBookingUpdate(updatedBooking, {
+      rejectedBy: req.user.name,
+      reason,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Job request declined.',
+      booking: updatedBooking,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update job status to in_progress (start field work)
 const updateJobStatus = async (req, res, next) => {
   try {
     const { bookingId } = req.params;
     const { status, note } = req.body;
 
-    const allowedStatuses = ['en_route', 'arrived'];
-    if (!allowedStatuses.includes(status)) {
+    if (status && status !== STATUS.IN_PROGRESS) {
       return res.status(400).json({
         success: false,
-        message: `Status must be one of: ${allowedStatuses.join(', ')}. Use dedicated OTP endpoint for starting job.`,
+        message: `Invalid status "${status}". Allowed status transition is "in_progress".`,
       });
     }
 
-    const booking = await Booking.findOne({ _id: bookingId, providerId: req.user._id });
-    if (!booking) {
-      return res.status(404).json({ success: false, message: 'Booking not found or not assigned to you.' });
-    }
-
-    booking.status = status;
-    booking.timeline.push({
-      status,
-      note: note || `Machinery is now ${status.replace('_', ' ')}`,
-      updatedBy: req.user._id,
+    const booking = await transitionBooking({
+      bookingId,
+      to: STATUS.IN_PROGRESS,
+      actor: req.user,
+      note: note || 'Field operation started by provider',
+      filter: { providerId: req.user._id },
+      set: { startedAt: new Date() },
     });
 
-    await booking.save();
-
-    // Emit live update
-    emitToUser(booking.farmerId, 'booking_status_updated', {
-      bookingId: booking._id,
-      status,
-      message: status === 'arrived' ? 'Provider has arrived! Please share your 4-digit OTP to start.' : 'Machinery is en-route to your parcel.',
-    });
-
-    sendNotificationToUser({
+    await notifyUser({
       userId: booking.farmerId,
-      title: status === 'arrived' ? '📍 Provider Arrived!' : '🚚 Machinery En Route',
-      body: status === 'arrived' 
-        ? `Provider has reached your farm parcel! Share your OTP (${booking.startOtp}) to begin operations.` 
-        : `Provider ${req.user.name} is en route to your field for Booking #${booking.bookingNumber}.`,
-      type: 'booking_update',
-      data: {
-        bookingId: String(booking._id),
-        status,
-        startOtp: String(booking.startOtp || ''),
-      },
-    }).catch((err) => console.error('[FCM] Status update notify error:', err));
+      bookingId: booking._id,
+      eventType: EVENTS.WORK_STARTED,
+      title: '⚙️ Work Started',
+      message: `Field work has started for booking #${booking.bookingNumber}.`,
+      data: { bookingId: String(booking._id), status: STATUS.IN_PROGRESS },
+    });
+
+    broadcastBookingUpdate(booking);
 
     res.status(200).json({
       success: true,
-      message: `Job status updated to ${status}`,
+      message: 'Job status updated to in_progress',
       booking,
     });
   } catch (error) {
@@ -305,47 +372,37 @@ const verifyStartOtp = async (req, res, next) => {
     const { bookingId } = req.params;
     const { otp } = req.body;
 
-    if (!otp) {
-      return res.status(400).json({ success: false, message: '4-digit OTP is required.' });
-    }
-
-    const booking = await Booking.findOne({ _id: bookingId, providerId: req.user._id });
-    if (!booking) {
+    const bookingDoc = await Booking.findOne({ _id: bookingId, providerId: req.user._id });
+    if (!bookingDoc) {
       return res.status(404).json({ success: false, message: 'Booking not found or not assigned to you.' });
     }
 
-    if (booking.startOtp !== otp.trim()) {
+    if (bookingDoc.startOtp && bookingDoc.startOtp !== (otp || '').trim()) {
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP! Please request the correct 4-digit code shown on the farmer app.',
       });
     }
 
-    booking.status = 'in_progress';
-    booking.timeline.push({
-      status: 'in_progress',
+    const booking = await transitionBooking({
+      bookingId,
+      to: STATUS.IN_PROGRESS,
+      actor: req.user,
       note: 'Field operation started via OTP verification',
-      updatedBy: req.user._id,
+      filter: { providerId: req.user._id },
+      set: { startedAt: new Date() },
     });
 
-    await booking.save();
-
-    emitToUser(booking.farmerId, 'booking_status_updated', {
-      bookingId: booking._id,
-      status: 'in_progress',
-      message: 'Field work has officially commenced! Live acreage counter active.',
-    });
-
-    sendNotificationToUser({
+    await notifyUser({
       userId: booking.farmerId,
+      bookingId: booking._id,
+      eventType: EVENTS.WORK_STARTED,
       title: '⚙️ Work Commenced!',
-      body: `Field operation has started for Booking #${booking.bookingNumber}. You can track live acreage coverage.`,
-      type: 'booking_update',
-      data: {
-        bookingId: String(booking._id),
-        status: 'in_progress',
-      },
-    }).catch((err) => console.error('[FCM] In progress notify error:', err));
+      message: `Field operation has started for Booking #${booking.bookingNumber}.`,
+      data: { bookingId: String(booking._id), status: STATUS.IN_PROGRESS },
+    });
+
+    broadcastBookingUpdate(booking);
 
     res.status(200).json({
       success: true,
@@ -357,153 +414,136 @@ const verifyStartOtp = async (req, res, next) => {
   }
 };
 
-// Complete Job and trigger payout & commission ledger
+// Complete Job - Marks completion_pending and generates confirmation OTP
 const completeJob = async (req, res, next) => {
   try {
     const { bookingId } = req.params;
     const { acreageWorked, operatorNotes, fieldPhotoUrl } = req.body;
 
-    const booking = await Booking.findOne({ _id: bookingId, providerId: req.user._id });
-    if (!booking) {
+    const existingBooking = await Booking.findOne({ _id: bookingId, providerId: req.user._id });
+    if (!existingBooking) {
       return res.status(404).json({ success: false, message: 'Booking not found or not assigned to you.' });
     }
 
-    if (booking.status === 'completed') {
+    if (existingBooking.status === STATUS.COMPLETED) {
       return res.status(400).json({ success: false, message: 'Booking has already been completed.' });
     }
 
-    booking.status = 'completed';
-    booking.completionSignoff = {
-      acreageWorked: Number(acreageWorked) || booking.parcelDetails.acreage,
-      operatorNotes: operatorNotes || '',
-      fieldPhotoUrl: fieldPhotoUrl || '',
-      completedAt: new Date(),
-    };
+    // Generate 4-digit confirmation OTP for farmer
+    const completionOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
-    booking.timeline.push({
-      status: 'completed',
-      note: `Field operation completed. ${acreageWorked || booking.parcelDetails.acreage} acres covered.`,
-      updatedBy: req.user._id,
+    const booking = await transitionBooking({
+      bookingId,
+      to: STATUS.COMPLETION_PENDING,
+      actor: req.user,
+      note: `Field operation completed by provider. Awaiting farmer OTP confirmation.`,
+      filter: { providerId: req.user._id },
+      set: {
+        completionOtp,
+        completionRequestedAt: new Date(),
+        'completionSignoff.acreageWorked': Number(acreageWorked) || existingBooking.parcelDetails?.acreage || 1,
+        'completionSignoff.operatorNotes': operatorNotes || '',
+        'completionSignoff.fieldPhotoUrl': fieldPhotoUrl || '',
+      },
     });
 
-    // Financial settlements
-    const providerPayout = booking.pricing.providerPayoutAmount || booking.pricing.totalAmount * 0.85;
-
-    // Credit Provider Wallet
-    let providerWallet = await Wallet.findOne({ userId: req.user._id });
-    if (providerWallet) {
-      providerWallet.balance += providerPayout;
-      providerWallet.totalEarned += providerPayout;
-      await providerWallet.save();
-
-      await Transaction.create({
-        walletId: providerWallet._id,
-        userId: req.user._id,
-        userRole: 'provider',
-        type: 'credit',
-        amount: providerPayout,
-        balanceAfter: providerWallet.balance,
-        status: 'completed',
-        referenceType: 'booking',
-        referenceId: booking._id,
-        description: `Earnings for completed booking #${booking.bookingNumber}`,
-      });
-    }
-
-    // Update Provider Profile metrics
-    const providerProfile = await ProviderProfile.findOne({ userId: req.user._id });
-    if (providerProfile) {
-      providerProfile.earnings.today += providerPayout;
-      providerProfile.earnings.weekly += providerPayout;
-      providerProfile.earnings.monthly += providerPayout;
-      providerProfile.earnings.totalAllTime += providerPayout;
-      providerProfile.metrics.jobsCompletedToday += 1;
-      providerProfile.metrics.acreageCoveredToday += Number(acreageWorked) || booking.parcelDetails.acreage;
-      await providerProfile.save();
-    }
-
-    // Handle Agent Commission if farmer was referred
-    if (booking.agentId) {
-      const agentCommission = booking.pricing.agentCommissionAmount || booking.pricing.totalAmount * 0.10;
-      const vestDate = new Date();
-      vestDate.setDate(vestDate.getDate() + 7); // 7-day vesting period
-
-      const commRecord = await CommissionRecord.create({
-        agentId: booking.agentId,
-        farmerId: booking.farmerId,
-        bookingId: booking._id,
-        bookingNumber: booking.bookingNumber,
-        totalBookingAmount: booking.pricing.totalAmount,
-        commissionPercent: 10,
-        commissionAmount: agentCommission,
-        status: 'pending', // unvested
-        vestDate,
-      });
-
-      // Update Agent Wallet pending balance
-      let agentWallet = await Wallet.findOne({ userId: booking.agentId });
-      if (agentWallet) {
-        agentWallet.pendingBalance += agentCommission;
-        await agentWallet.save();
-
-        await Transaction.create({
-          walletId: agentWallet._id,
-          userId: booking.agentId,
-          userRole: 'agent',
-          type: 'commission_earned',
-          amount: agentCommission,
-          balanceAfter: agentWallet.balance,
-          status: 'pending',
-          referenceType: 'booking',
-          referenceId: booking._id,
-          description: `Referral commission pending vesting for booking #${booking.bookingNumber}`,
-        });
-      }
-
-      emitToUser(booking.agentId, 'commission_update', {
-        amount: agentCommission,
-        bookingNumber: booking.bookingNumber,
-        vestDate,
-      });
-    }
-
-    booking.payment.status = 'settled';
-    await booking.save();
-
-    // Notify farmer
-    emitToUser(booking.farmerId, 'booking_status_updated', {
-      bookingId: booking._id,
-      status: 'completed',
-      message: 'Field work has been completed! Please review and rate your service.',
-    });
-
-    sendNotificationToUser({
+    // Notify farmer with the completion OTP
+    await notifyUser({
       userId: booking.farmerId,
-      title: '🎉 Job Completed!',
-      body: `Work for Booking #${booking.bookingNumber} is completed! Your work certificate & invoice are ready. Tap to rate.`,
-      type: 'booking_update',
+      bookingId: booking._id,
+      eventType: EVENTS.WORK_COMPLETED,
+      title: '🌾 Work Completed - Confirmation Needed',
+      message: `Provider completed field work for Booking #${booking.bookingNumber}. Your completion confirmation OTP is: ${completionOtp}`,
       data: {
         bookingId: String(booking._id),
-        status: 'completed',
+        status: STATUS.COMPLETION_PENDING,
+        completionOtp,
       },
-    }).catch((err) => console.error('[FCM] Completed notify error to farmer:', err));
+    });
 
-    sendNotificationToUser({
-      userId: req.user._id,
-      title: '💰 Payout Credited!',
-      body: `₹${providerPayout.toFixed(2)} has been credited to your Provider Wallet for Booking #${booking.bookingNumber}.`,
-      type: 'payout_update',
-      data: {
-        bookingId: String(booking._id),
-        payoutAmount: String(providerPayout),
-      },
-    }).catch((err) => console.error('[FCM] Completed notify error to provider:', err));
+    // Notify Admin
+    await notifyAdmins({
+      bookingId: booking._id,
+      eventType: EVENTS.WORK_COMPLETED,
+      title: 'Work Completed — Awaiting Farmer OTP',
+      message: `Provider ${req.user.name} finished work for #${booking.bookingNumber}. Waiting for farmer OTP verification.`,
+      data: { bookingId: String(booking._id) },
+    });
+
+    broadcastBookingUpdate(booking, { completionOtp });
 
     res.status(200).json({
       success: true,
-      message: 'Job completed successfully! Earnings credited to your wallet.',
+      message: 'Work completion recorded! Awaiting farmer confirmation OTP.',
       booking,
-      payoutAmount: providerPayout,
+      completionOtp,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Verify completion OTP given by farmer to provider
+const verifyCompletionOtp = async (req, res, next) => {
+  try {
+    const { bookingId } = req.params;
+    const { otp } = req.body;
+
+    if (!otp) {
+      return res.status(400).json({ success: false, message: '4-digit completion OTP is required.' });
+    }
+
+    const bookingDoc = await Booking.findOne({ _id: bookingId, providerId: req.user._id }).select('+completionOtp');
+    if (!bookingDoc) {
+      return res.status(404).json({ success: false, message: 'Booking not found or not assigned to you.' });
+    }
+
+    if (bookingDoc.status === STATUS.COMPLETED) {
+      return res.status(400).json({ success: false, message: 'Booking has already been completed.' });
+    }
+
+    if (bookingDoc.completionOtp && bookingDoc.completionOtp !== String(otp).trim()) {
+      return res.status(400).json({ success: false, message: 'Invalid completion OTP! Please check with the farmer.' });
+    }
+
+    const booking = await transitionBooking({
+      bookingId,
+      to: STATUS.COMPLETED,
+      actor: req.user,
+      note: 'Field operation confirmed and verified via completion OTP.',
+      filter: { providerId: req.user._id },
+      set: {
+        'completionSignoff.completedAt': new Date(),
+      },
+    });
+
+    // Settle payouts atomically
+    await settleBooking(booking._id);
+
+    // Notify farmer and admin
+    await notifyUser({
+      userId: booking.farmerId,
+      bookingId: booking._id,
+      eventType: EVENTS.COMPLETION_CONFIRMED,
+      title: '🎉 Booking Completed & Verified!',
+      message: `Your booking #${booking.bookingNumber} is complete and settled. Thank you for using ProFarmer!`,
+      data: { bookingId: String(booking._id), status: STATUS.COMPLETED },
+    });
+
+    await notifyAdmins({
+      bookingId: booking._id,
+      eventType: EVENTS.COMPLETION_CONFIRMED,
+      title: 'Booking Completed & Settled',
+      message: `Booking #${booking.bookingNumber} completed via OTP and settled.`,
+      data: { bookingId: String(booking._id) },
+    });
+
+    broadcastBookingUpdate(booking);
+
+    res.status(200).json({
+      success: true,
+      message: 'Completion OTP verified successfully! Payout has been credited to your wallet.',
+      booking,
     });
   } catch (error) {
     next(error);
@@ -1128,9 +1168,11 @@ module.exports = {
   addMachinery,
   getJobs,
   acceptJob,
+  rejectJob,
   updateJobStatus,
   verifyStartOtp,
   completeJob,
+  verifyCompletionOtp,
   getEarnings,
   requestPayout,
   getReviews,

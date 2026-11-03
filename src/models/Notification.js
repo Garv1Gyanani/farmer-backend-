@@ -35,6 +35,24 @@ const notificationSchema = new mongoose.Schema(
       default: 'system_alert',
       index: true,
     },
+    bookingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Booking',
+      default: null,
+      index: true,
+    },
+    // e.g. booking_created, booking_accepted, booking_rejected, work_started,
+    // work_completed, completion_confirmed, booking_cancelled
+    eventType: {
+      type: String,
+      default: '',
+      index: true,
+    },
+    // Unique per recipient. Prevents the same event notifying the same user twice.
+    dedupeKey: {
+      type: String,
+      default: undefined,
+    },
     data: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
@@ -49,6 +67,18 @@ const notificationSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+notificationSchema.index(
+  { recipientId: 1, dedupeKey: 1 },
+  { unique: true, partialFilterExpression: { dedupeKey: { $type: 'string' } } }
+);
+
+notificationSchema.set('toJSON', {
+  transform: (doc, ret) => {
+    ret.message = ret.body;
+    return ret;
+  },
+});
 
 const Notification = mongoose.model('Notification', notificationSchema);
 module.exports = Notification;

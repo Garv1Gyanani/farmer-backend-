@@ -38,7 +38,7 @@ const getDashboardKpis = async (req, res, next) => {
 
     // Active field operations
     const activeBookings = await Booking.countDocuments({
-      status: { $in: ['pending_broadcast', 'assigned', 'en_route', 'arrived', 'in_progress'] },
+      status: { $in: ['pending_broadcast', 'assigned', 'in_progress', 'completion_pending'] },
     });
     const completedBookings = await Booking.countDocuments({ status: 'completed' });
     const totalBookings = await Booking.countDocuments();

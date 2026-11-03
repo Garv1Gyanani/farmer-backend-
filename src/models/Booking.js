@@ -5,7 +5,17 @@ const bookingTimelineSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   note: { type: String, default: '' },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  actorRole: { type: String, default: '' },
 });
+
+const rejectionSchema = new mongoose.Schema(
+  {
+    providerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    reason: { type: String, default: '' },
+    rejectedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
 
 const bookingSchema = new mongoose.Schema(
   {
@@ -63,22 +73,28 @@ const bookingSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: [
-        'pending_broadcast',
-        'assigned',
-        'en_route',
-        'arrived',
-        'in_progress',
-        'completed',
-        'cancelled',
+        'pending_broadcast', // PENDING: waiting for the provider to accept
+        'assigned', // ACCEPTED: provider confirmed
+        'in_progress', // IN_PROGRESS: field operation started
+        'completion_pending', // COMPLETION_PENDING: provider finished, farmer must confirm with OTP
+        'completed', // COMPLETED: farmer confirmed, payment settled
+        'rejected', // REJECTED: assigned provider declined
+        'cancelled', // CANCELLED
       ],
       default: 'pending_broadcast',
       index: true,
     },
-    startOtp: {
-      type: String,
-      required: true,
-      length: 4,
-    },
+    // Legacy field kept for old records only. Not generated or exposed by the current workflow.
+    startOtp: { type: String, select: false },
+    // Completion OTP: generated when the provider marks the work finished.
+    // Shown only to the provider and typed in by the farmer to confirm completion.
+    completionOtp: { type: String, select: false },
+    completionOtpAttempts: { type: Number, default: 0, select: false },
+    acceptedAt: { type: Date },
+    acceptedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    startedAt: { type: Date },
+    completionRequestedAt: { type: Date },
+    rejections: { type: [rejectionSchema], default: [] },
     pricing: {
       unitPrice: { type: Number, required: true },
       units: { type: Number, required: true },
@@ -98,7 +114,7 @@ const bookingSchema = new mongoose.Schema(
       },
       status: {
         type: String,
-        enum: ['pending', 'escrow_locked', 'paid_on_completion', 'settled', 'refunded'],
+        enum: ['pending', 'escrow_locked', 'paid_on_completion', 'settled', 'refund_pending', 'refunded'],
         default: 'pending',
       },
       transactionId: { type: String, default: '' },

@@ -1,10 +1,42 @@
+const jwt = require('jsonwebtoken');
+
 let io = null;
 
 const initSocket = (socketIoInstance) => {
   io = socketIoInstance;
 
+  // Optional JWT Authentication Middleware
+  io.use((socket, next) => {
+    try {
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.headers?.authorization?.replace(/^Bearer\s+/i, '') ||
+        socket.handshake.query?.token;
+
+      if (token && process.env.JWT_SECRET) {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        socket.userId = decoded.id || decoded._id;
+        socket.userRole = decoded.role;
+      }
+    } catch (err) {
+      // Allow connection even if token expired or invalid; client can still emit join_*
+      console.warn(`[Socket.IO] Handshake auth fallback for socket ${socket.id}: ${err.message}`);
+    }
+    next();
+  });
+
   io.on('connection', (socket) => {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
+
+    // Auto-join if authenticated via handshake
+    if (socket.userId) {
+      socket.join(`user:${socket.userId}`);
+      console.log(`[Socket.IO] Socket ${socket.id} auto-joined user:${socket.userId}`);
+    }
+    if (socket.userRole) {
+      socket.join(`role:${socket.userRole}`);
+      console.log(`[Socket.IO] Socket ${socket.id} auto-joined role:${socket.userRole}`);
+    }
 
     // Join user private room
     socket.on('join_user', (userId) => {
