@@ -75,10 +75,19 @@ const settleBooking = async (bookingId) => {
         vestDate,
       });
 
-      const agentWallet = await Wallet.findOne({ userId: booking.agentId });
-      if (agentWallet) {
-        agentWallet.pendingBalance += commission;
-        await agentWallet.save();
+      let agentWallet = await Wallet.findOne({ userId: booking.agentId });
+      if (!agentWallet) {
+        agentWallet = await Wallet.create({
+          userId: booking.agentId,
+          userRole: 'agent',
+          balance: 0,
+          pendingBalance: 0,
+          vestedBalance: 0,
+          totalEarned: 0,
+        });
+      }
+      agentWallet.pendingBalance += commission;
+      await agentWallet.save();
         await Transaction.create({
           walletId: agentWallet._id,
           userId: booking.agentId,
