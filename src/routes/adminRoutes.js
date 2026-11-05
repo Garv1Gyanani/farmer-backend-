@@ -10,6 +10,7 @@ const {
   addFarmerParcel,
   deleteFarmerParcel,
   creditFarmerWallet,
+  creditAgentWallet,
   getFarmerDossier,
   getAgentsList,
   createAgent,
@@ -70,6 +71,7 @@ router.post('/farmers/:id/wallet/credit', creditFarmerWallet);
 router.get('/agents', getAgentsList);
 router.post('/agents', createAgent);
 router.put('/agents/:id', updateAgent);
+router.post('/agents/:id/wallet/credit', creditAgentWallet);
 router.get('/providers', getProvidersList);
 router.post('/providers', createProvider);
 router.put('/providers/:id', updateProvider);

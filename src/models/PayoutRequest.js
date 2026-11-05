@@ -26,10 +26,19 @@ const payoutRequestSchema = new mongoose.Schema(
       required: true,
       min: 100,
     },
+    payoutMethod: {
+      type: String,
+      enum: ['bank', 'upi'],
+      default: 'bank',
+    },
+    upiId: {
+      type: String,
+      default: '',
+    },
     bankDetails: {
-      accountHolder: { type: String, required: true },
-      accountNumber: { type: String, required: true },
-      ifsc: { type: String, required: true },
+      accountHolder: { type: String, default: '' },
+      accountNumber: { type: String, default: '' },
+      ifsc: { type: String, default: '' },
       bankName: { type: String, default: 'Primary Commercial Bank' },
     },
     status: {

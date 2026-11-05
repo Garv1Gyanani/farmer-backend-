@@ -1563,6 +1563,68 @@ const creditFarmerWallet = async (req, res, next) => {
   }
 };
 
+// Credit or adjust Agent commission wallet
+const creditAgentWallet = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { amount, description = 'Agent Performance Bonus / Commission Credit' } = req.body;
+
+    const numAmount = Number(amount);
+    if (!numAmount || numAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid credit amount is required.' });
+    }
+
+    const agentUser = await User.findById(id);
+    if (!agentUser || agentUser.role !== 'agent') {
+      return res.status(404).json({ success: false, message: 'Agent not found.' });
+    }
+
+    let wallet = await Wallet.findOne({ userId: id });
+    if (!wallet) {
+      wallet = await Wallet.create({ userId: id, userRole: 'agent', balance: 0 });
+    }
+
+    wallet.balance += numAmount;
+    wallet.totalEarned = (wallet.totalEarned || 0) + numAmount;
+    await wallet.save();
+
+    await Transaction.create({
+      walletId: wallet._id,
+      userId: id,
+      userRole: 'agent',
+      type: 'credit',
+      amount: numAmount,
+      balanceAfter: wallet.balance,
+      description,
+      referenceType: 'system_adjustment',
+      status: 'completed',
+    });
+
+    emitToUser(id, 'wallet_credited', {
+      amount: numAmount,
+      newBalance: wallet.balance,
+      description,
+    });
+
+    await AuditLog.create({
+      adminId: req.user._id,
+      adminEmail: req.user.email,
+      action: 'wallet_credited',
+      targetId: id,
+      targetType: 'payout',
+      details: { agentName: agentUser.name, amount: numAmount, description },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Credited ₹${numAmount.toLocaleString()} to ${agentUser.name}'s wallet. New available balance: ₹${wallet.balance.toLocaleString()}`,
+      walletBalance: wallet.balance,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // 24. Get Full 360° Farmer Dossier
 const getFarmerDossier = async (req, res, next) => {
   try {
@@ -1731,10 +1793,29 @@ const updateAgent = async (req, res, next) => {
     if (profile) {
       if (kycStatus) profile.kycStatus = kycStatus;
       if (villages) {
-        profile.coverageClusters = (Array.isArray(villages) ? villages : [villages]).map((v) => ({
-          villageName: typeof v === 'string' ? v.trim() : v.villageName,
-          district: district || profile.coverageClusters[0]?.district || 'Jaipur',
-        }));
+        const rawList = Array.isArray(villages)
+          ? villages
+          : typeof villages === 'string'
+            ? villages.split(',').map((s) => s.trim()).filter(Boolean)
+            : [villages];
+
+        profile.coverageClusters = rawList.map((v) => {
+          const vName = typeof v === 'string' ? v.trim() : (v.villageName || '').trim();
+          const existing = profile.coverageClusters.find(
+            (c) => c.villageName.toLowerCase() === vName.toLowerCase()
+          );
+          return {
+            villageName: vName,
+            district:
+              typeof v === 'object' && v.district
+                ? v.district
+                : district || profile.coverageClusters[0]?.district || 'Jaipur',
+            farmerCount: existing ? existing.farmerCount : 0,
+            isVisited: existing ? existing.isVisited : false,
+            visited: existing ? existing.visited : false,
+            lastVisit: existing ? existing.lastVisit : null,
+          };
+        });
       }
       await profile.save();
     }
@@ -2337,6 +2418,7 @@ module.exports = {
   addFarmerParcel,
   deleteFarmerParcel,
   creditFarmerWallet,
+  creditAgentWallet,
   getFarmerDossier,
   getAgentsList,
   createAgent,

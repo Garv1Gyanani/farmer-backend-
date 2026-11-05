@@ -250,7 +250,7 @@ const getCommissionLedger = async (req, res, next) => {
 // Request withdrawal of agent commission
 const requestCommissionWithdrawal = async (req, res, next) => {
   try {
-    const { amount, bankDetails } = req.body;
+    const { amount, bankDetails, payoutMethod = 'bank', upiId } = req.body;
     const withdrawAmount = Number(amount);
 
     if (!withdrawAmount || withdrawAmount < 100) {
@@ -269,13 +269,43 @@ const requestCommissionWithdrawal = async (req, res, next) => {
     }
 
     const agentProfile = await AgentProfile.findOne({ userId: req.user._id });
-    const bank = bankDetails || (agentProfile ? agentProfile.bankDetails : null);
+    const isUpi = payoutMethod === 'upi' || (upiId && upiId.trim().length > 0);
 
-    if (!bank || !bank.accountNumber || !bank.ifsc) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide complete bank account number and IFSC code.',
-      });
+    let cleanBank = null;
+    let cleanUpi = '';
+
+    if (isUpi) {
+      cleanUpi = (upiId || (agentProfile?.bankDetails?.upiId) || '').trim();
+      if (!cleanUpi || !cleanUpi.includes('@')) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide a valid UPI ID (e.g. mobile@upi, username@okhdfcbank).',
+        });
+      }
+    } else {
+      const bank = bankDetails || (agentProfile ? agentProfile.bankDetails : null);
+      if (!bank || !bank.accountNumber || !bank.ifsc) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide complete bank account number and IFSC code.',
+        });
+      }
+      cleanBank = {
+        accountHolder: bank.accountHolder || req.user.name,
+        accountNumber: bank.accountNumber.trim(),
+        ifsc: bank.ifsc.trim().toUpperCase(),
+        bankName: bank.bankName || 'Commercial Bank',
+      };
+    }
+
+    // Remember payout details on agent profile
+    if (agentProfile) {
+      agentProfile.bankDetails = {
+        ...(agentProfile.bankDetails || {}),
+        ...(cleanBank || {}),
+        upiId: cleanUpi || agentProfile.bankDetails?.upiId || '',
+      };
+      await agentProfile.save();
     }
 
     // Deduct available balance
@@ -290,11 +320,13 @@ const requestCommissionWithdrawal = async (req, res, next) => {
       userId: req.user._id,
       userRole: 'agent',
       amount: withdrawAmount,
-      bankDetails: {
-        accountHolder: bank.accountHolder || req.user.name,
-        accountNumber: bank.accountNumber,
-        ifsc: bank.ifsc,
-        bankName: bank.bankName || 'Bank Account',
+      payoutMethod: isUpi ? 'upi' : 'bank',
+      upiId: cleanUpi,
+      bankDetails: cleanBank || {
+        accountHolder: req.user.name,
+        accountNumber: 'UPI Payment',
+        ifsc: 'UPI',
+        bankName: cleanUpi,
       },
       status: 'pending',
     });
@@ -309,7 +341,7 @@ const requestCommissionWithdrawal = async (req, res, next) => {
       status: 'pending',
       referenceType: 'payout_request',
       referenceId: payout._id,
-      description: `Commission payout request #${payoutNumber}`,
+      description: `Commission payout request #${payoutNumber} (${isUpi ? 'UPI: ' + cleanUpi : 'Bank: ' + cleanBank.accountNumber})`,
     });
 
     // Notify Admin via Socket.IO
