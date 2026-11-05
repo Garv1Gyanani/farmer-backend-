@@ -46,6 +46,7 @@ router.post('/jobs/:bookingId/accept', acceptJob);
 router.post('/jobs/:bookingId/reject', rejectJob);
 router.put('/jobs/:bookingId/status', updateJobStatus);
 router.post('/jobs/:bookingId/verify-otp', verifyStartOtp);
+router.post('/jobs/:bookingId/verify-start-otp', verifyStartOtp);
 router.post('/jobs/:bookingId/complete', completeJob);
 router.post('/jobs/:bookingId/verify-completion-otp', verifyCompletionOtp);
 router.get('/earnings', getEarnings);

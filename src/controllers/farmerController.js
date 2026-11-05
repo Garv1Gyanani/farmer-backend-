@@ -414,6 +414,7 @@ const getFarmerHomeFeed = async (req, res, next) => {
               serviceName: activeBooking.serviceId?.title || 'Farm Mechanization Service',
               status: activeBooking.status,
               startOtp: activeBooking.startOtp,
+              completionOtp: activeBooking.completionOtp,
               scheduledDate: activeBooking.scheduledDate,
               timeSlot: activeBooking.timeSlot,
               totalAmount: activeBooking.pricing.totalAmount,

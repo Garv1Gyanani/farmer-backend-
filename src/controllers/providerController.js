@@ -377,10 +377,15 @@ const verifyStartOtp = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Booking not found or not assigned to you.' });
     }
 
-    if (bookingDoc.startOtp && bookingDoc.startOtp !== (otp || '').trim()) {
+    const cleanOtp = String(otp || '').trim();
+    if (!cleanOtp) {
+      return res.status(400).json({ success: false, message: '4-digit Start OTP is required.' });
+    }
+
+    if (bookingDoc.startOtp && bookingDoc.startOtp !== cleanOtp) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid OTP! Please request the correct 4-digit code shown on the farmer app.',
+        message: 'Invalid Start OTP! Please request the correct 4-digit code shown on the farmer app.',
       });
     }
 

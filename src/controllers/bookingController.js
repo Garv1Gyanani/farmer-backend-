@@ -507,6 +507,11 @@ const getBookingDetails = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
 
+    if (!booking.startOtp && booking.status !== 'completed' && booking.status !== 'cancelled') {
+      booking.startOtp = Math.floor(1000 + Math.random() * 9000).toString();
+      await Booking.updateOne({ _id: booking._id }, { startOtp: booking.startOtp });
+    }
+
     res.status(200).json({
       success: true,
       booking,

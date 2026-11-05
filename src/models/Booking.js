@@ -84,12 +84,10 @@ const bookingSchema = new mongoose.Schema(
       default: 'pending_broadcast',
       index: true,
     },
-    // Legacy field kept for old records only. Not generated or exposed by the current workflow.
-    startOtp: { type: String, select: false },
-    // Completion OTP: generated when the provider marks the work finished.
-    // Shown only to the provider and typed in by the farmer to confirm completion.
-    completionOtp: { type: String, select: false },
-    completionOtpAttempts: { type: Number, default: 0, select: false },
+    // Job verification OTPs
+    startOtp: { type: String, default: null },
+    completionOtp: { type: String, default: null },
+    completionOtpAttempts: { type: Number, default: 0 },
     acceptedAt: { type: Date },
     acceptedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     startedAt: { type: Date },
