@@ -107,7 +107,7 @@ const getReferredFarmers = async (req, res, next) => {
 // Quick Register new farmer by Agent
 const registerFarmerByAgent = async (req, res, next) => {
   try {
-    const { name, phone, village, tehsilBlock, district, totalLandSize, farmName } = req.body;
+    const { name, phone, village, tehsilBlock, district, totalLandSize, farmName, preferredLanguage } = req.body;
 
     if (!name || !phone) {
       return res.status(400).json({ success: false, message: 'Name and phone are required.' });
@@ -128,6 +128,7 @@ const registerFarmerByAgent = async (req, res, next) => {
       password: tempPassword,
       role: 'farmer',
       status: 'pending_verification',
+      preferredLanguage: preferredLanguage || 'hi-en',
     });
 
     const agentProfile = await AgentProfile.findOne({ userId: req.user._id });
