@@ -316,6 +316,13 @@ const getFarmerBookings = async (req, res, next) => {
       .populate('providerId', 'name phone avatarUrl')
       .sort({ createdAt: -1 });
 
+    for (const b of bookings) {
+      if (!b.startOtp && b.status !== 'completed' && b.status !== 'cancelled') {
+        b.startOtp = Math.floor(1000 + Math.random() * 9000).toString();
+        await Booking.updateOne({ _id: b._id }, { startOtp: b.startOtp });
+      }
+    }
+
     res.status(200).json({
       success: true,
       count: bookings.length,
@@ -347,6 +354,11 @@ const getFarmerHomeFeed = async (req, res, next) => {
       .populate('serviceId')
       .populate('providerId', 'name phone avatarUrl')
       .sort({ createdAt: -1 });
+
+    if (activeBooking && !activeBooking.startOtp && activeBooking.status !== 'completed' && activeBooking.status !== 'cancelled') {
+      activeBooking.startOtp = Math.floor(1000 + Math.random() * 9000).toString();
+      await Booking.updateOne({ _id: activeBooking._id }, { startOtp: activeBooking.startOtp });
+    }
 
     // 2. Fetch micro-climate weather based on farmer's GPS coordinates
     const lat = profile.location?.coordinates?.[1] || 30.901;

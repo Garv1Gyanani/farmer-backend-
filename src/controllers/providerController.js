@@ -193,6 +193,21 @@ const acceptJob = async (req, res, next) => {
   try {
     const { bookingId } = req.params;
 
+    // Idempotency check: if this booking is already accepted by the calling provider, return 200 smoothly
+    const existing = await Booking.findById(bookingId);
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+    if (existing.status === STATUS.ACCEPTED && existing.providerId && existing.providerId.toString() === req.user._id.toString()) {
+      await existing.populate('serviceId');
+      await existing.populate('farmerId', 'name phone avatarUrl');
+      return res.status(200).json({
+        success: true,
+        message: 'Dispatch already accepted. Prepare equipment and proceed to field.',
+        booking: existing,
+      });
+    }
+
     // Atomically transition from PENDING -> ACCEPTED with concurrency check
     const booking = await transitionBooking({
       bookingId,
@@ -210,16 +225,18 @@ const acceptJob = async (req, res, next) => {
     await booking.populate('serviceId');
     await booking.populate('farmerId', 'name phone avatarUrl');
 
-    // Notify farmer via persistent notification, socket, and FCM
+    // Notify farmer via persistent notification, socket, and FCM (includes Start OTP)
+    const otpNotice = booking.startOtp ? ` Your Job Start Code is ${booking.startOtp}.` : '';
     await notifyUser({
       userId: booking.farmerId?._id || booking.farmerId,
       bookingId: booking._id,
       eventType: EVENTS.BOOKING_ACCEPTED,
-      title: '🚜 Provider Confirmed!',
-      message: `${req.user.name} has accepted your booking #${booking.bookingNumber}. Machinery is preparing for dispatch.`,
+      title: booking.startOtp ? `🚜 Provider Confirmed! Start OTP: #${booking.startOtp}` : '🚜 Provider Confirmed!',
+      message: `${req.user.name} has accepted your booking #${booking.bookingNumber}.${otpNotice} Please share this 4-digit code with the operator upon arrival to begin field work.`,
       data: {
         bookingId: String(booking._id),
         status: STATUS.ACCEPTED,
+        startOtp: booking.startOtp ? String(booking.startOtp) : '',
       },
     });
 
