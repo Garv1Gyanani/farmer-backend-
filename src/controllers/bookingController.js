@@ -239,9 +239,10 @@ const checkout = async (req, res, next) => {
       const taxes = 0;
       const totalAmount = baseAmount;
 
-      // Distribution logic
-      const agentCommissionAmount = Math.round(baseAmount * 0.05); // 5%
-      const providerPayoutAmount = Math.round(baseAmount * 0.90); // 90%
+      // Distribution logic (10% referral commission only if farmer was referred by an agent)
+      const hasReferredAgent = Boolean(farmerProfile && farmerProfile.referredByAgentId);
+      const agentCommissionAmount = hasReferredAgent ? Math.round(baseAmount * 0.10) : 0;
+      const providerPayoutAmount = Math.round(baseAmount * 0.85); // 85%
 
       const bookingNumber = await generateBookingNumber();
       const startOtp = generateStartOtp();
@@ -369,6 +370,7 @@ const checkout = async (req, res, next) => {
         const bookingNumber = await generateBookingNumber();
         const startOtp = generateStartOtp();
 
+        const hasReferredAgent = Boolean(farmerProfile && farmerProfile.referredByAgentId);
         const booking = await Booking.create({
           bookingNumber,
           farmerId: req.user._id,
@@ -395,7 +397,7 @@ const checkout = async (req, res, next) => {
             platformFee,
             taxes,
             totalAmount,
-            agentCommissionAmount: Math.round(baseAmount * 0.10),
+            agentCommissionAmount: hasReferredAgent ? Math.round(baseAmount * 0.10) : 0,
             providerPayoutAmount: Math.round(baseAmount * 0.85),
           },
           payment: {
