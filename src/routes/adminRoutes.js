@@ -37,6 +37,7 @@ const {
   updateRazorpaySettings,
   sendAdminNotification,
   getAdminNotificationHistory,
+  getReferralAnalytics,
 } = require('../controllers/adminController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
@@ -52,6 +53,9 @@ router.put('/settings/razorpay', updateRazorpaySettings);
 // Broadcast & Direct Push Notifications
 router.post('/notifications/send', sendAdminNotification);
 router.get('/notifications/history', getAdminNotificationHistory);
+
+// Referral Analytics & Agent Performance Tracking
+router.get('/referrals/analytics', getReferralAnalytics);
 
 router.get('/verification/queue', getVerificationQueue);
 router.get('/verification/history', getVerificationHistory);

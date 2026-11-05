@@ -21,6 +21,7 @@ const {
 } = require('../services/razorpayService');
 const { emitToUser, broadcastEvent } = require('../socket/socketHandler');
 const { normalizePhone, getPhoneVariants } = require('../utils/phoneHelper');
+const { sendNotificationToUser } = require('../services/fcmService');
 
 // 1. Dashboard KPI Overview
 const getDashboardKpis = async (req, res, next) => {
@@ -154,10 +155,9 @@ const getVerificationQueue = async (req, res, next) => {
     let providers = [];
 
     if (role === 'all' || role === 'farmer') {
-      const farmerProfiles = await FarmerProfile.find({ kycStatus: { $in: ['pending', 'action_needed'] } }).populate(
-        'userId',
-        'name phone email status createdAt'
-      );
+      const farmerProfiles = await FarmerProfile.find({ kycStatus: { $in: ['pending', 'action_needed'] } })
+        .populate('userId', 'name phone email status createdAt')
+        .populate('referredByAgentId', 'name phone email');
       farmers = farmerProfiles.filter((f) => f.userId);
     }
 
@@ -269,7 +269,7 @@ const processVerification = async (req, res, next) => {
       ipAddress: req.ip || '',
     });
 
-    // Notify user via Socket.IO & notification record
+    // Notify user via Socket.IO & notification record & FCM push
     const notifTitle =
       action === 'approve'
         ? 'Account Verified & Activated!'
@@ -279,21 +279,41 @@ const processVerification = async (req, res, next) => {
 
     const notifBody =
       action === 'approve'
-        ? 'Congratulations! Your ProFarmer verification is complete. You have full access to platform features.'
+        ? 'Congratulations! Your ProFarmer account is verified & activated. You can now log in and book farm services.'
         : `Verification notice: ${targetProfile.kycRejectionReason}`;
 
-    await Notification.create({
-      recipientId: user._id,
-      recipientRole: userRole,
-      title: notifTitle,
-      body: notifBody,
-      type: 'kyc_status',
-    });
+    // Send push notification to user
+    try {
+      await sendNotificationToUser({
+        userId: user._id,
+        title: notifTitle,
+        body: notifBody,
+        type: 'kyc_status',
+        data: { status: user.status, kycStatus: targetProfile.kycStatus },
+      });
+    } catch (fcmErr) {
+      console.error('[FCM] Error notifying user of KYC change:', fcmErr.message);
+    }
 
     emitToUser(user._id, 'kyc_status_updated', {
       kycStatus: targetProfile.kycStatus,
       message: notifBody,
     });
+
+    // If this was a referred farmer and is approved, notify the referring agent!
+    if (userRole === 'farmer' && targetProfile.referredByAgentId && action === 'approve') {
+      try {
+        await sendNotificationToUser({
+          userId: targetProfile.referredByAgentId,
+          title: '✅ Farmer Referral Approved!',
+          body: `Great news! ${user.name} has been verified and approved by admin. You will earn commissions on their bookings!`,
+          type: 'system_alert',
+          data: { type: 'referral_approved', farmerId: user._id.toString() },
+        });
+      } catch (agentFcmErr) {
+        console.error('[FCM] Error notifying agent of farmer approval:', agentFcmErr.message);
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -2109,7 +2129,200 @@ const getAdminNotificationHistory = async (req, res, next) => {
   }
 };
 
+// 28. Referral Analytics & Attribution Engine
+const getReferralAnalytics = async (req, res, next) => {
+  try {
+    const { agentId, status, search } = req.query;
+
+    // 1. Fetch all agents with their profiles
+    const agentUsers = await User.find({ role: 'agent' }).select('name phone email status createdAt');
+    const agentProfiles = await AgentProfile.find().populate('userId', 'name phone email status');
+
+    const agentMap = new Map();
+    agentUsers.forEach((a) => {
+      agentMap.set(a._id.toString(), {
+        _id: a._id,
+        name: a.name,
+        phone: a.phone,
+        email: a.email,
+        status: a.status,
+        agentCode: '',
+        assignedDistrict: '',
+        assignedVillages: [],
+      });
+    });
+
+    agentProfiles.forEach((ap) => {
+      const uId = ap.userId?._id?.toString() || ap.userId?.toString();
+      if (uId && agentMap.has(uId)) {
+        const item = agentMap.get(uId);
+        item.agentCode = ap.agentCode || '';
+        item.assignedDistrict = ap.assignedDistrict || '';
+        item.assignedVillages = ap.assignedVillages || [];
+        item.profileId = ap._id;
+      }
+    });
+
+    // 2. Query all farmers with referredByAgentId != null
+    let farmerQuery = { referredByAgentId: { $ne: null } };
+    if (agentId && agentId !== 'all') {
+      farmerQuery.referredByAgentId = agentId;
+    }
+
+    const referredFarmerProfiles = await FarmerProfile.find(farmerQuery)
+      .populate('userId', 'name phone email status createdAt')
+      .populate('referredByAgentId', 'name phone email')
+      .sort({ createdAt: -1 });
+
+    let filteredProfiles = referredFarmerProfiles.filter((p) => p.userId);
+
+    if (status && status !== 'all') {
+      filteredProfiles = filteredProfiles.filter((p) => {
+        if (status === 'pending') return p.userId.status === 'pending_verification' || p.kycStatus === 'pending';
+        if (status === 'active') return p.userId.status === 'active' || p.kycStatus === 'approved';
+        if (status === 'rejected') return p.userId.status === 'rejected' || p.kycStatus === 'rejected';
+        return true;
+      });
+    }
+
+    if (search && search.trim()) {
+      const s = search.toLowerCase().trim();
+      filteredProfiles = filteredProfiles.filter((p) => {
+        const fName = (p.userId.name || '').toLowerCase();
+        const fPhone = (p.userId.phone || '').toLowerCase();
+        const aName = (p.referredByAgentId?.name || '').toLowerCase();
+        const aPhone = (p.referredByAgentId?.phone || '').toLowerCase();
+        const village = (p.village || '').toLowerCase();
+        const district = (p.district || '').toLowerCase();
+        return (
+          fName.includes(s) ||
+          fPhone.includes(s) ||
+          aName.includes(s) ||
+          aPhone.includes(s) ||
+          village.includes(s) ||
+          district.includes(s)
+        );
+      });
+    }
+
+    // 3. Compute High-Level KPIs
+    const allReferred = referredFarmerProfiles.filter((p) => p.userId);
+    const totalReferrals = allReferred.length;
+    const pendingApprovals = allReferred.filter(
+      (p) => p.userId.status === 'pending_verification' || p.kycStatus === 'pending'
+    ).length;
+    const activeApproved = allReferred.filter(
+      (p) => p.userId.status === 'active' || p.kycStatus === 'approved'
+    ).length;
+    const rejectedCount = allReferred.filter(
+      (p) => p.userId.status === 'rejected' || p.kycStatus === 'rejected'
+    ).length;
+
+    // Total commissions & bookings
+    const commissionRecords = await CommissionRecord.find();
+    const totalCommissionsEarned = commissionRecords.reduce((acc, c) => acc + (c.commissionAmount || 0), 0);
+    const totalCommissionsVested = commissionRecords
+      .filter((c) => c.status === 'vested')
+      .reduce((acc, c) => acc + (c.commissionAmount || 0), 0);
+
+    const referredFarmerUserIds = allReferred.map((p) => p.userId._id);
+    const bookings = await Booking.find({ farmerId: { $in: referredFarmerUserIds } });
+    const totalBookingGMV = bookings.reduce((acc, b) => acc + (b.pricing?.totalAmount || 0), 0);
+    const totalBookingsCount = bookings.length;
+
+    // 4. Compute Agent Performance Leaderboard
+    const agentStats = [];
+    agentMap.forEach((agent) => {
+      const agentFarmers = allReferred.filter(
+        (p) => p.referredByAgentId?._id?.toString() === agent._id.toString()
+      );
+      const approvedCount = agentFarmers.filter(
+        (p) => p.userId.status === 'active' || p.kycStatus === 'approved'
+      ).length;
+      const pendingCount = agentFarmers.filter(
+        (p) => p.userId.status === 'pending_verification' || p.kycStatus === 'pending'
+      ).length;
+
+      const farmerIds = agentFarmers.map((p) => p.userId._id.toString());
+      const agentBookings = bookings.filter((b) => farmerIds.includes(b.farmerId.toString()));
+      const gmv = agentBookings.reduce((acc, b) => acc + (b.pricing?.totalAmount || 0), 0);
+
+      const agentComms = commissionRecords.filter((c) => c.agentId.toString() === agent._id.toString());
+      const commEarned = agentComms.reduce((acc, c) => acc + (c.commissionAmount || 0), 0);
+
+      agentStats.push({
+        agentId: agent._id,
+        name: agent.name,
+        phone: agent.phone,
+        agentCode: agent.agentCode || 'AG-N/A',
+        district: agent.assignedDistrict || 'N/A',
+        totalReferrals: agentFarmers.length,
+        approvedReferrals: approvedCount,
+        pendingReferrals: pendingCount,
+        totalBookings: agentBookings.length,
+        totalRevenue: gmv,
+        commissionsEarned: commEarned,
+      });
+    });
+
+    agentStats.sort((a, b) => b.totalReferrals - a.totalReferrals);
+
+    // 5. Format Individual Referrals List
+    const referrals = filteredProfiles.map((p) => {
+      const u = p.userId;
+      const a = p.referredByAgentId;
+      const fBookings = bookings.filter((b) => b.farmerId.toString() === u._id.toString());
+      const spend = fBookings.reduce((acc, b) => acc + (b.pricing?.totalAmount || 0), 0);
+
+      return {
+        farmerId: u._id,
+        name: u.name,
+        phone: u.phone,
+        status: u.status,
+        kycStatus: p.kycStatus || 'pending',
+        farmName: p.farmName || `${u.name}'s Farm`,
+        village: p.village || 'N/A',
+        district: p.district || 'N/A',
+        totalLandSize: p.totalLandSize || 5,
+        landUnit: p.landUnit || 'acres',
+        referralCodeUsed: p.referralCodeUsed || '',
+        onboardedAt: u.createdAt,
+        agent: a
+          ? {
+              agentId: a._id,
+              name: a.name,
+              phone: a.phone,
+              agentCode: agentMap.get(a._id.toString())?.agentCode || p.referralCodeUsed || 'AG-N/A',
+            }
+          : null,
+        totalBookings: fBookings.length,
+        totalSpent: spend,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      summary: {
+        totalReferrals,
+        pendingApprovals,
+        activeApproved,
+        rejectedCount,
+        totalBookingsCount,
+        totalBookingGMV,
+        totalCommissionsEarned,
+        totalCommissionsVested,
+      },
+      agentStats,
+      referrals,
+      agents: Array.from(agentMap.values()),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
+  getReferralAnalytics,
   getRazorpaySettings,
   updateRazorpaySettings,
   sendAdminNotification,

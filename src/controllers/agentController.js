@@ -6,6 +6,8 @@ const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const PayoutRequest = require('../models/PayoutRequest');
 const CommissionRecord = require('../models/CommissionRecord');
+const AuditLog = require('../models/AuditLog');
+const Notification = require('../models/Notification');
 const { emitToRole } = require('../socket/socketHandler');
 
 // Agent Dashboard KPIs
@@ -129,14 +131,15 @@ const registerFarmerByAgent = async (req, res, next) => {
     });
 
     const agentProfile = await AgentProfile.findOne({ userId: req.user._id });
+    const resolvedDistrict = district || (agentProfile ? agentProfile.assignedDistrict : '');
 
     const farmerProfile = await FarmerProfile.create({
       userId: user._id,
-      farmName: farmName || `${name}'s Farm`,
+      farmName: farmName || `${name.trim()}'s Farm`,
       totalLandSize: Number(totalLandSize) || 5,
       village: village || '',
       tehsilBlock: tehsilBlock || '',
-      district: district || '',
+      district: resolvedDistrict,
       referredByAgentId: req.user._id,
       referralCodeUsed: agentProfile ? agentProfile.agentCode : '',
       parcels: [
@@ -166,6 +169,45 @@ const registerFarmerByAgent = async (req, res, next) => {
       }
       await agentProfile.save();
     }
+
+    // Log action to audit log
+    try {
+      await AuditLog.create({
+        adminId: req.user._id,
+        adminEmail: req.user.phone || req.user.email || 'agent',
+        action: 'AGENT_ONBOARDED_FARMER',
+        targetType: 'farmer',
+        targetId: user._id,
+        details: {
+          agentId: req.user._id,
+          agentName: req.user.name,
+          agentCode: agentProfile?.agentCode,
+          farmerName: user.name,
+          farmerPhone: user.phone,
+          village: village || '',
+          district: resolvedDistrict,
+        },
+      });
+    } catch (auditErr) {
+      console.error('[AuditLog] Error logging farmer onboarding:', auditErr.message);
+    }
+
+    // Notify admins via socket
+    emitToRole('admin', 'new_referral_onboarded', {
+      farmer: {
+        _id: user._id,
+        name: user.name,
+        phone: user.phone,
+        status: user.status,
+      },
+      agent: {
+        _id: req.user._id,
+        name: req.user.name,
+        code: agentProfile?.agentCode,
+      },
+      village,
+      district: resolvedDistrict,
+    });
 
     res.status(201).json({
       success: true,
