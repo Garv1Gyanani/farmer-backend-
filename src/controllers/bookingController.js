@@ -498,10 +498,10 @@ const getBookingDetails = async (req, res, next) => {
       .populate('providerId', 'name phone avatarUrl')
       .populate('agentId', 'name phone');
 
-    // If farmer or admin, select completionOtp so farmer can view and confirm it
+    // If farmer or admin, select startOtp and completionOtp so farmer can view and share them
     const bookingDoc = await Booking.findById(id).select('farmerId status');
     if (bookingDoc && (String(bookingDoc.farmerId) === String(req.user._id) || req.user.role === 'admin')) {
-      query = query.select('+completionOtp');
+      query = query.select('+startOtp +completionOtp');
     }
 
     const booking = await query;

@@ -311,7 +311,7 @@ const getFarmerBookings = async (req, res, next) => {
     }
 
     const bookings = await Booking.find(query)
-      .select('+completionOtp')
+      .select('+startOtp +completionOtp')
       .populate('serviceId')
       .populate('providerId', 'name phone avatarUrl')
       .sort({ createdAt: -1 });
@@ -350,7 +350,7 @@ const getFarmerHomeFeed = async (req, res, next) => {
       farmerId: user._id,
       status: { $in: ['pending_broadcast', 'assigned', 'in_progress', 'completion_pending'] },
     })
-      .select('+completionOtp')
+      .select('+startOtp +completionOtp')
       .populate('serviceId')
       .populate('providerId', 'name phone avatarUrl')
       .sort({ createdAt: -1 });
