@@ -375,6 +375,7 @@ const getAssignedVillages = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      villages: profile.coverageClusters,
       coverageClusters: profile.coverageClusters,
     });
   } catch (error) {
