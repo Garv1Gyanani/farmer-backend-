@@ -903,6 +903,8 @@ const createOrUpdateService = async (req, res, next) => {
       availableHours,
       hourPackages,
       extensionOptions,
+      hourPackages,
+      extensionOptions,
       specifications,
       providerName,
       badgeTag,
@@ -932,6 +934,33 @@ const createOrUpdateService = async (req, res, next) => {
       if (availableHours !== undefined) {
         service.availableHours = Array.isArray(availableHours)
           ? availableHours.map((h) => Number(h)).filter((h) => h > 0)
+          : [];
+      }
+      if (hourPackages !== undefined) {
+        const cleanPkgs = Array.isArray(hourPackages)
+          ? hourPackages
+              .map((p) => ({
+                hours: Number(p.hours),
+                label: String(p.label || '').trim(),
+                slotTime: String(p.slotTime || '').trim(),
+                price: p.price !== '' && p.price !== null && p.price !== undefined ? Number(p.price) : null,
+              }))
+              .filter((p) => Number.isFinite(p.hours) && p.hours > 0)
+          : [];
+        service.hourPackages = cleanPkgs;
+        if (cleanPkgs.length > 0) {
+          service.availableHours = [...new Set(cleanPkgs.map((p) => p.hours))].sort((a, b) => a - b);
+        }
+      }
+      if (extensionOptions !== undefined) {
+        service.extensionOptions = Array.isArray(extensionOptions)
+          ? extensionOptions
+              .map((e) => ({
+                hours: Number(e.hours),
+                label: String(e.label || '').trim(),
+                price: e.price !== '' && e.price !== null && e.price !== undefined ? Number(e.price) : null,
+              }))
+              .filter((e) => Number.isFinite(e.hours) && e.hours > 0)
           : [];
       }
       if (hourPackages !== undefined) {

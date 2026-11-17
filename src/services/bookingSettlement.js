@@ -100,7 +100,6 @@ const settleBooking = async (bookingId) => {
           referenceId: booking._id,
           description: `Referral commission pending vesting for booking #${booking.bookingNumber}`,
         });
-      }
       emitToUser(booking.agentId, 'commission_update', {
         amount: commission,
         bookingNumber: booking.bookingNumber,
