@@ -1104,7 +1104,11 @@ const extendBookingTime = async (req, res, next) => {
       if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
         return res.status(400).json({ success: false, message: 'Razorpay payment details are required.' });
       }
-      const isValid = verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
+      const isValid = verifyPaymentSignature({
+        orderId: razorpayOrderId,
+        paymentId: razorpayPaymentId,
+        signature: razorpaySignature,
+      });
       if (!isValid) {
         return res.status(400).json({ success: false, message: 'Invalid Razorpay payment signature.' });
       }
