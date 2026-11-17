@@ -20,6 +20,7 @@ const {
   updateProvider,
   toggleUserStatus,
   getAllBookings,
+  assignBookingProvider,
   getPayoutRequests,
   processPayoutRequest,
   getAllTransactions,
@@ -77,6 +78,7 @@ router.post('/providers', createProvider);
 router.put('/providers/:id', updateProvider);
 router.put('/users/:userId/status', toggleUserStatus);
 router.get('/bookings', getAllBookings);
+router.put('/bookings/:id/assign-provider', assignBookingProvider);
 router.get('/payouts', getPayoutRequests);
 router.put('/payouts/:payoutId', processPayoutRequest);
 router.get('/transactions', getAllTransactions);

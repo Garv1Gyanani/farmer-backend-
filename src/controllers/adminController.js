@@ -22,6 +22,8 @@ const {
 const { emitToUser, broadcastEvent } = require('../socket/socketHandler');
 const { normalizePhone, getPhoneVariants } = require('../utils/phoneHelper');
 const { sendNotificationToUser } = require('../services/fcmService');
+const { STATUS, transitionBooking } = require('../services/bookingStateMachine');
+const { EVENTS, notifyUser, broadcastBookingUpdate } = require('../services/notificationService');
 
 // 1. Dashboard KPI Overview
 const getDashboardKpis = async (req, res, next) => {
@@ -613,6 +615,123 @@ const getAllBookings = async (req, res, next) => {
       total,
       page: Number(page),
       bookings,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// 8b. Assign or Reassign a Service Provider to a Booking (Admin Manual Dispatch)
+const assignBookingProvider = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { providerId } = req.body;
+
+    if (!providerId) {
+      return res.status(400).json({ success: false, message: 'Provider ID is required.' });
+    }
+
+    const providerUser = await User.findOne({ _id: providerId, role: 'provider' });
+    if (!providerUser) {
+      return res.status(404).json({ success: false, message: 'Service provider not found.' });
+    }
+
+    const existing = await Booking.findById(id).populate('serviceId', 'title machineryType');
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    if (![STATUS.PENDING, STATUS.ACCEPTED].includes(existing.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot assign provider when booking status is "${existing.status}".`,
+      });
+    }
+
+    let updatedBooking;
+    if (existing.status === STATUS.PENDING) {
+      updatedBooking = await transitionBooking({
+        bookingId: id,
+        to: STATUS.ACCEPTED,
+        actor: req.user,
+        note: `Admin assigned booking to service provider ${providerUser.name}`,
+        from: [STATUS.PENDING],
+        set: {
+          providerId: providerUser._id,
+          acceptedBy: providerUser._id,
+          acceptedAt: new Date(),
+        },
+      });
+    } else {
+      existing.providerId = providerUser._id;
+      existing.acceptedBy = providerUser._id;
+      existing.acceptedAt = new Date();
+      existing.timeline.push({
+        status: existing.status,
+        note: `Admin reassigned booking to service provider ${providerUser.name}`,
+        updatedBy: req.user._id,
+        timestamp: new Date(),
+      });
+      await existing.save();
+      updatedBooking = existing;
+    }
+
+    await updatedBooking.populate('farmerId', 'name phone email role village tehsil district');
+    await updatedBooking.populate('providerId', 'name phone email role businessName');
+    await updatedBooking.populate('serviceId', 'title machineryType description pricingModel category');
+
+    await AuditLog.create({
+      actorId: req.user._id,
+      actorRole: 'admin',
+      action: 'ASSIGN_BOOKING_PROVIDER',
+      targetId: updatedBooking._id,
+      targetModel: 'Booking',
+      details: {
+        bookingNumber: updatedBooking.bookingNumber,
+        providerId: providerUser._id,
+        providerName: providerUser.name,
+      },
+    });
+
+    const serviceTitle = updatedBooking.serviceId?.title || 'Agri Service';
+    const village = updatedBooking.parcelDetails?.village || 'farm location';
+
+    // Notify assigned Service Provider (persisted in-app notification + Socket.IO + FCM Push)
+    await notifyUser({
+      userId: providerUser._id,
+      bookingId: updatedBooking._id,
+      eventType: EVENTS.DISPATCH_RECEIVED,
+      title: '🚜 New Job Assigned by Admin!',
+      message: `Booking #${updatedBooking.bookingNumber} (${serviceTitle}) in ${village} has been assigned to you. Open Ongoing Jobs to prepare dispatch.`,
+      data: {
+        type: 'admin_assigned_job',
+        bookingId: String(updatedBooking._id),
+        bookingNumber: updatedBooking.bookingNumber,
+      },
+    });
+
+    // Notify Farmer with assigned provider & Start OTP
+    const otpNotice = updatedBooking.startOtp ? ` Your Job Start Code is ${updatedBooking.startOtp}.` : '';
+    await notifyUser({
+      userId: updatedBooking.farmerId?._id || updatedBooking.farmerId,
+      bookingId: updatedBooking._id,
+      eventType: EVENTS.BOOKING_ACCEPTED,
+      title: '🚜 Service Provider Assigned!',
+      message: `${providerUser.name} has been assigned to your booking #${updatedBooking.bookingNumber} (${serviceTitle}).${otpNotice}`,
+      data: {
+        type: 'booking_accepted',
+        bookingId: String(updatedBooking._id),
+        bookingNumber: updatedBooking.bookingNumber,
+        startOtp: updatedBooking.startOtp || '',
+      },
+    });
+
+    broadcastBookingUpdate(updatedBooking, { assignedByAdmin: true });
+
+    res.status(200).json({
+      success: true,
+      message: `Booking assigned to ${providerUser.name} and notifications sent.`,
+      booking: updatedBooking,
     });
   } catch (error) {
     next(error);
@@ -2428,6 +2547,7 @@ module.exports = {
   updateProvider,
   toggleUserStatus,
   getAllBookings,
+  assignBookingProvider,
   getPayoutRequests,
   processPayoutRequest,
   getAllTransactions,
