@@ -1104,6 +1104,7 @@ const createProviderService = async (req, res, next) => {
       pricingModel,
       basePrice,
       minUnits,
+      availableHours,
       specifications,
       imageUrl,
     } = req.body;
@@ -1135,9 +1136,12 @@ const createProviderService = async (req, res, next) => {
       category,
       description: description ? description.trim() : '',
       machineryType: machineryType.trim(),
-      pricingModel: pricingModel || 'per_acre',
+      pricingModel: pricingModel || 'per_hour',
       basePrice: Number(basePrice),
       minUnits: Number(minUnits) || 1,
+      availableHours: Array.isArray(availableHours)
+        ? availableHours.map((h) => Number(h)).filter((h) => h > 0)
+        : [],
       specifications: {
         horsepower: specifications?.horsepower || '',
         implementWidth: specifications?.implementWidth || '',

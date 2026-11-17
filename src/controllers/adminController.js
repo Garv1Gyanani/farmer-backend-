@@ -900,6 +900,7 @@ const createOrUpdateService = async (req, res, next) => {
       pricingModel,
       basePrice,
       minUnits,
+      availableHours,
       specifications,
       providerName,
       badgeTag,
@@ -926,6 +927,11 @@ const createOrUpdateService = async (req, res, next) => {
       if (pricingModel) service.pricingModel = pricingModel;
       if (basePrice !== undefined) service.basePrice = Number(basePrice);
       if (minUnits !== undefined) service.minUnits = Number(minUnits);
+      if (availableHours !== undefined) {
+        service.availableHours = Array.isArray(availableHours)
+          ? availableHours.map((h) => Number(h)).filter((h) => h > 0)
+          : [];
+      }
       if (specifications) service.specifications = { ...service.specifications, ...specifications };
       if (providerName !== undefined) service.providerName = providerName;
       if (badgeTag !== undefined) service.badgeTag = badgeTag;
@@ -957,9 +963,12 @@ const createOrUpdateService = async (req, res, next) => {
         category,
         description,
         machineryType,
-        pricingModel: pricingModel || 'per_acre',
+        pricingModel: pricingModel || 'per_hour',
         basePrice: Number(basePrice),
         minUnits: Number(minUnits) || 1,
+        availableHours: Array.isArray(availableHours)
+          ? availableHours.map((h) => Number(h)).filter((h) => h > 0)
+          : [],
         specifications: specifications || {},
         providerName: providerName || 'Rajesh Agricultural Services',
         badgeTag: badgeTag || 'Top Pick',
@@ -2107,6 +2116,85 @@ const updateProvider = async (req, res, next) => {
   }
 };
 
+const DEFAULT_BOOKING_CONFIG = {
+  bookingHoursOptions: [2, 4, 6, 8],
+  extensionHoursOptions: [1, 2, 4],
+  collectPaymentBeforeService: false,
+  defaultTimeSlots: [
+    '6:00 AM - 8:00 AM',
+    '8:00 AM - 10:00 AM',
+    '10:00 AM - 12:00 PM',
+    '12:00 PM - 2:00 PM',
+    '2:00 PM - 4:00 PM',
+    '4:00 PM - 6:00 PM',
+  ],
+};
+
+// Get Booking & Hours Configuration
+const getBookingConfig = async (req, res, next) => {
+  try {
+    const setting = await SystemSetting.findOne({ key: 'booking_config' }).lean();
+    const config = {
+      ...DEFAULT_BOOKING_CONFIG,
+      ...(setting?.value || {}),
+    };
+    res.status(200).json({
+      success: true,
+      config,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update Booking & Hours Configuration
+const updateBookingConfig = async (req, res, next) => {
+  try {
+    const {
+      bookingHoursOptions,
+      extensionHoursOptions,
+      collectPaymentBeforeService,
+      defaultTimeSlots,
+    } = req.body;
+
+    const existing = await SystemSetting.findOne({ key: 'booking_config' });
+    const prev = existing?.value || DEFAULT_BOOKING_CONFIG;
+
+    const cleanHours = (arr, fallback) => {
+      if (!Array.isArray(arr)) return fallback;
+      const parsed = [...new Set(arr.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0))];
+      return parsed.length > 0 ? parsed.sort((a, b) => a - b) : fallback;
+    };
+
+    const updatedValue = {
+      bookingHoursOptions: cleanHours(bookingHoursOptions, prev.bookingHoursOptions || DEFAULT_BOOKING_CONFIG.bookingHoursOptions),
+      extensionHoursOptions: cleanHours(extensionHoursOptions, prev.extensionHoursOptions || DEFAULT_BOOKING_CONFIG.extensionHoursOptions),
+      collectPaymentBeforeService:
+        collectPaymentBeforeService !== undefined
+          ? Boolean(collectPaymentBeforeService)
+          : Boolean(prev.collectPaymentBeforeService),
+      defaultTimeSlots:
+        Array.isArray(defaultTimeSlots) && defaultTimeSlots.length > 0
+          ? defaultTimeSlots.map((s) => String(s).trim()).filter(Boolean)
+          : (prev.defaultTimeSlots || DEFAULT_BOOKING_CONFIG.defaultTimeSlots),
+    };
+
+    await SystemSetting.findOneAndUpdate(
+      { key: 'booking_config' },
+      { $set: { value: updatedValue, updatedBy: req.user?._id } },
+      { upsert: true, new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Booking hours & payment settings updated.',
+      config: updatedValue,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getRazorpaySettings = async (req, res, next) => {
   try {
     const setting = await SystemSetting.findOne({ key: 'razorpay' });
@@ -2525,6 +2613,8 @@ module.exports = {
   getReferralAnalytics,
   getRazorpaySettings,
   updateRazorpaySettings,
+  getBookingConfig,
+  updateBookingConfig,
   sendAdminNotification,
   getAdminNotificationHistory,
   getDashboardKpis,

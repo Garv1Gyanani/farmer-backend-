@@ -37,6 +37,8 @@ const {
   updateAdminProfile,
   getRazorpaySettings,
   updateRazorpaySettings,
+  getBookingConfig,
+  updateBookingConfig,
   sendAdminNotification,
   getAdminNotificationHistory,
   getReferralAnalytics,
@@ -51,6 +53,8 @@ router.get('/profile', getAdminProfile);
 router.put('/profile', updateAdminProfile);
 router.get('/settings/razorpay', getRazorpaySettings);
 router.put('/settings/razorpay', updateRazorpaySettings);
+router.get('/settings/booking-config', getBookingConfig);
+router.put('/settings/booking-config', updateBookingConfig);
 
 // Broadcast & Direct Push Notifications
 router.post('/notifications/send', sendAdminNotification);

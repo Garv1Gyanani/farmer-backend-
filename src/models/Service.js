@@ -34,6 +34,10 @@ const serviceSchema = new mongoose.Schema(
       type: Number,
       default: 1,
     },
+    availableHours: {
+      type: [Number],
+      default: [],
+    },
     specifications: {
       horsepower: { type: String, default: '' },
       implementWidth: { type: String, default: '' },
