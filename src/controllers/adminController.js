@@ -903,8 +903,6 @@ const createOrUpdateService = async (req, res, next) => {
       availableHours,
       hourPackages,
       extensionOptions,
-      hourPackages,
-      extensionOptions,
       specifications,
       providerName,
       badgeTag,
