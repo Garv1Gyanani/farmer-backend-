@@ -92,11 +92,22 @@ const bookingSchema = new mongoose.Schema(
     acceptedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     startedAt: { type: Date },
     completionRequestedAt: { type: Date },
+    extensionHours: { type: Number, default: 0 },
+    extensions: [
+      {
+        hours: { type: Number, required: true },
+        amount: { type: Number, required: true },
+        paymentMethod: { type: String, default: 'wallet' },
+        transactionId: { type: String, default: '' },
+        requestedAt: { type: Date, default: Date.now },
+      },
+    ],
     rejections: { type: [rejectionSchema], default: [] },
     pricing: {
       unitPrice: { type: Number, required: true },
       units: { type: Number, required: true },
       baseAmount: { type: Number, required: true },
+      extensionAmount: { type: Number, default: 0 },
       couponDiscount: { type: Number, default: 0 },
       platformFee: { type: Number, default: 0 },
       taxes: { type: Number, default: 0 },

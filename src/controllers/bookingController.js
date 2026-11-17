@@ -930,12 +930,151 @@ const verifyPayment = async (req, res, next) => {
   }
 };
 
+// Request Extended Service Time (only allowed after service is in_progress; payment collected immediately)
+const extendBookingTime = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      hours,
+      paymentMethod = 'wallet',
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    } = req.body;
+
+    const extHours = Number(hours);
+    if (!Number.isFinite(extHours) || extHours <= 0) {
+      return res.status(400).json({ success: false, message: 'Please select a valid extension duration.' });
+    }
+
+    const booking = await Booking.findById(id).populate('serviceId');
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    if (String(booking.farmerId) !== String(req.user._id)) {
+      return res.status(403).json({ success: false, message: 'Not authorized for this booking.' });
+    }
+
+    if (booking.status !== STATUS.IN_PROGRESS) {
+      return res.status(400).json({
+        success: false,
+        message: 'Service extension can only be requested after the service has started.',
+      });
+    }
+
+    const service = booking.serviceId;
+    const unitRate = Number(service?.basePrice || booking.pricing?.unitPrice || 500);
+    const customExt = Array.isArray(service?.extensionOptions)
+      ? service.extensionOptions.find((e) => Number(e.hours) === extHours)
+      : null;
+    const extAmount = customExt && customExt.price !== null && customExt.price !== undefined
+      ? Number(customExt.price)
+      : Math.round(unitRate * extHours);
+
+    if (extAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid extension fee.' });
+    }
+
+    let txnId = '';
+    if (paymentMethod === 'wallet') {
+      const wallet = await Wallet.findOne({ userId: req.user._id });
+      if (!wallet || wallet.balance < extAmount) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient wallet balance (Available: ₹${wallet ? wallet.balance : 0}, Required: ₹${extAmount}). Please add funds or pay via Razorpay.`,
+        });
+      }
+      wallet.balance -= extAmount;
+      await wallet.save();
+
+      txnId = `EXT_WLT_${Date.now()}`;
+      await Transaction.create({
+        walletId: wallet._id,
+        userId: req.user._id,
+        userRole: req.user.role || 'farmer',
+        type: 'debit',
+        amount: extAmount,
+        balanceAfter: wallet.balance,
+        description: `Service Extension (+${extHours} hrs) for Booking #${booking.bookingNumber}`,
+        referenceType: 'booking',
+        referenceId: booking._id,
+        status: 'completed',
+      });
+    } else if (paymentMethod === 'razorpay') {
+      if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+        return res.status(400).json({ success: false, message: 'Razorpay payment details are required.' });
+      }
+      const isValid = verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
+      if (!isValid) {
+        return res.status(400).json({ success: false, message: 'Invalid Razorpay payment signature.' });
+      }
+      txnId = razorpayPaymentId;
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Upfront payment (Wallet or Razorpay) is required at the time of extension request.',
+      });
+    }
+
+    const providerExtra = Math.round(extAmount * 0.85);
+    const agentExtra = booking.agentId ? Math.round(extAmount * 0.10) : 0;
+
+    booking.extensionHours = (booking.extensionHours || 0) + extHours;
+    booking.extensions = booking.extensions || [];
+    booking.extensions.push({
+      hours: extHours,
+      amount: extAmount,
+      paymentMethod,
+      transactionId: txnId,
+      requestedAt: new Date(),
+    });
+    booking.pricing.extensionAmount = (booking.pricing.extensionAmount || 0) + extAmount;
+    booking.pricing.totalAmount = (booking.pricing.totalAmount || 0) + extAmount;
+    booking.pricing.providerPayoutAmount = (booking.pricing.providerPayoutAmount || 0) + providerExtra;
+    booking.pricing.agentCommissionAmount = (booking.pricing.agentCommissionAmount || 0) + agentExtra;
+    booking.timeline.push({
+      status: booking.status,
+      note: `Farmer extended service by +${extHours} hr(s) with upfront payment of ₹${extAmount} (${paymentMethod}).`,
+      updatedBy: req.user._id,
+      timestamp: new Date(),
+    });
+    await booking.save();
+
+    if (booking.providerId) {
+      await notifyUser({
+        userId: booking.providerId,
+        bookingId: booking._id,
+        eventType: EVENTS.DISPATCH_RECEIVED,
+        title: `⏱️ Service Extended (+${extHours} Hrs)`,
+        message: `Farmer extended Booking #${booking.bookingNumber} by +${extHours} hour(s) (₹${extAmount} paid upfront).`,
+        data: {
+          type: 'booking_extended',
+          bookingId: String(booking._id),
+          extensionHours: String(extHours),
+        },
+      });
+    }
+
+    broadcastBookingUpdate(booking, { extendedByHours: extHours });
+
+    res.status(200).json({
+      success: true,
+      message: `Service extended by +${extHours} hour(s) and ₹${extAmount} paid.`,
+      booking,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getCart,
   addToCart,
   removeFromCart,
   applyCoupon,
   checkout,
+  extendBookingTime,
   getBookingDetails,
   getLiveTracking,
   cancelBooking,

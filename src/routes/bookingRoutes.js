@@ -16,6 +16,7 @@ const {
   createPaymentOrder,
   createRazorpayOrderDirect,
   verifyPayment,
+  extendBookingTime,
 } = require('../controllers/bookingController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -35,6 +36,7 @@ router.post('/:id/payment/order', createPaymentOrder);
 router.post('/:id/payment/verify', verifyPayment);
 router.post('/:id/cancel', cancelBooking);
 router.post('/:id/confirm-completion', confirmCompletion);
+router.post('/:id/extend', extendBookingTime);
 router.post('/:id/rate', rateBooking);
 
 module.exports = router;
