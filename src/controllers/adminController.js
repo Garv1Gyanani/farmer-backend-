@@ -901,6 +901,8 @@ const createOrUpdateService = async (req, res, next) => {
       basePrice,
       minUnits,
       availableHours,
+      hourPackages,
+      extensionOptions,
       specifications,
       providerName,
       badgeTag,
@@ -930,6 +932,33 @@ const createOrUpdateService = async (req, res, next) => {
       if (availableHours !== undefined) {
         service.availableHours = Array.isArray(availableHours)
           ? availableHours.map((h) => Number(h)).filter((h) => h > 0)
+          : [];
+      }
+      if (hourPackages !== undefined) {
+        const cleanPkgs = Array.isArray(hourPackages)
+          ? hourPackages
+              .map((p) => ({
+                hours: Number(p.hours),
+                label: String(p.label || '').trim(),
+                slotTime: String(p.slotTime || '').trim(),
+                price: p.price !== '' && p.price !== null && p.price !== undefined ? Number(p.price) : null,
+              }))
+              .filter((p) => Number.isFinite(p.hours) && p.hours > 0)
+          : [];
+        service.hourPackages = cleanPkgs;
+        if (cleanPkgs.length > 0) {
+          service.availableHours = [...new Set(cleanPkgs.map((p) => p.hours))].sort((a, b) => a - b);
+        }
+      }
+      if (extensionOptions !== undefined) {
+        service.extensionOptions = Array.isArray(extensionOptions)
+          ? extensionOptions
+              .map((e) => ({
+                hours: Number(e.hours),
+                label: String(e.label || '').trim(),
+                price: e.price !== '' && e.price !== null && e.price !== undefined ? Number(e.price) : null,
+              }))
+              .filter((e) => Number.isFinite(e.hours) && e.hours > 0)
           : [];
       }
       if (specifications) service.specifications = { ...service.specifications, ...specifications };
@@ -968,6 +997,25 @@ const createOrUpdateService = async (req, res, next) => {
         minUnits: Number(minUnits) || 1,
         availableHours: Array.isArray(availableHours)
           ? availableHours.map((h) => Number(h)).filter((h) => h > 0)
+          : [],
+        hourPackages: Array.isArray(hourPackages)
+          ? hourPackages
+              .map((p) => ({
+                hours: Number(p.hours),
+                label: String(p.label || '').trim(),
+                slotTime: String(p.slotTime || '').trim(),
+                price: p.price !== '' && p.price !== null && p.price !== undefined ? Number(p.price) : null,
+              }))
+              .filter((p) => Number.isFinite(p.hours) && p.hours > 0)
+          : [],
+        extensionOptions: Array.isArray(extensionOptions)
+          ? extensionOptions
+              .map((e) => ({
+                hours: Number(e.hours),
+                label: String(e.label || '').trim(),
+                price: e.price !== '' && e.price !== null && e.price !== undefined ? Number(e.price) : null,
+              }))
+              .filter((e) => Number.isFinite(e.hours) && e.hours > 0)
           : [],
         specifications: specifications || {},
         providerName: providerName || 'Rajesh Agricultural Services',

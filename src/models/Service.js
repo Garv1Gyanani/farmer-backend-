@@ -38,6 +38,21 @@ const serviceSchema = new mongoose.Schema(
       type: [Number],
       default: [],
     },
+    hourPackages: [
+      {
+        hours: { type: Number, required: true },
+        label: { type: String, default: '' },
+        slotTime: { type: String, default: '' },
+        price: { type: Number, default: null },
+      },
+    ],
+    extensionOptions: [
+      {
+        hours: { type: Number, required: true },
+        label: { type: String, default: '' },
+        price: { type: Number, default: null },
+      },
+    ],
     specifications: {
       horsepower: { type: String, default: '' },
       implementWidth: { type: String, default: '' },
