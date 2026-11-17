@@ -2195,6 +2195,7 @@ const DEFAULT_BOOKING_CONFIG = {
   bookingHoursOptions: [2, 4, 6, 8],
   extensionHoursOptions: [1, 2, 4],
   collectPaymentBeforeService: false,
+  broadcastToAllProviders: false,
   defaultTimeSlots: [
     '6:00 AM - 8:00 AM',
     '8:00 AM - 10:00 AM',
@@ -2229,6 +2230,7 @@ const updateBookingConfig = async (req, res, next) => {
       bookingHoursOptions,
       extensionHoursOptions,
       collectPaymentBeforeService,
+      broadcastToAllProviders,
       defaultTimeSlots,
     } = req.body;
 
@@ -2248,6 +2250,10 @@ const updateBookingConfig = async (req, res, next) => {
         collectPaymentBeforeService !== undefined
           ? Boolean(collectPaymentBeforeService)
           : Boolean(prev.collectPaymentBeforeService),
+      broadcastToAllProviders:
+        broadcastToAllProviders !== undefined
+          ? Boolean(broadcastToAllProviders)
+          : Boolean(prev.broadcastToAllProviders),
       defaultTimeSlots:
         Array.isArray(defaultTimeSlots) && defaultTimeSlots.length > 0
           ? defaultTimeSlots.map((s) => String(s).trim()).filter(Boolean)

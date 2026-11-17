@@ -1,9 +1,15 @@
 const Category = require('../models/Category');
 const Service = require('../models/Service');
 const ProviderProfile = require('../models/ProviderProfile');
+const SystemSetting = require('../models/SystemSetting');
 const { STATUS } = require('./bookingStateMachine');
 
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+async function isBroadcastToAllProvidersEnabled() {
+  const setting = await SystemSetting.findOne({ key: 'booking_config' }).lean();
+  return Boolean(setting?.value?.broadcastToAllProviders);
+}
 
 /**
  * Resolve all Category ObjectIds a provider is qualified to serve,
@@ -45,6 +51,17 @@ async function getProviderMatchingCategoryIds(providerUserId, profile) {
  * - Unassigned admin/platform services (providerId === null) whose category matches the provider
  */
 async function buildPendingDispatchQuery(providerUserId, profile) {
+  if (await isBroadcastToAllProvidersEnabled()) {
+    return {
+      status: STATUS.PENDING,
+      'rejections.providerId': { $ne: providerUserId },
+      $or: [
+        { providerId: providerUserId },
+        { providerId: null },
+      ],
+    };
+  }
+
   const matchingCategoryIds = await getProviderMatchingCategoryIds(providerUserId, profile);
 
   const matchingAdminServices = matchingCategoryIds.length
@@ -88,14 +105,16 @@ async function canProviderAcceptBooking(booking, providerUserId, profile) {
   }
 
   if (!booking.providerId && booking.serviceId) {
-    const service = await Service.findById(booking.serviceId).select('category');
-    if (service && service.category) {
-      const matchingCatIds = await getProviderMatchingCategoryIds(providerUserId, profile);
-      if (!matchingCatIds.includes(String(service.category))) {
-        return {
-          allowed: false,
-          message: 'This service category does not match your registered service category.',
-        };
+    if (!(await isBroadcastToAllProvidersEnabled())) {
+      const service = await Service.findById(booking.serviceId).select('category');
+      if (service && service.category) {
+        const matchingCatIds = await getProviderMatchingCategoryIds(providerUserId, profile);
+        if (!matchingCatIds.includes(String(service.category))) {
+          return {
+            allowed: false,
+            message: 'This service category does not match your registered service category.',
+          };
+        }
       }
     }
   }
@@ -109,6 +128,13 @@ async function canProviderAcceptBooking(booking, providerUserId, profile) {
 async function getMatchingOnlineProviderIdsForBooking(booking) {
   if (booking.providerId) {
     return [booking.providerId];
+  }
+
+  if (await isBroadcastToAllProvidersEnabled()) {
+    const allOnline = await ProviderProfile.find({ isOnline: true })
+      .select('userId')
+      .limit(200);
+    return allOnline.map((p) => p.userId);
   }
 
   const service = await Service.findById(booking.serviceId).populate('category', 'name slug');
