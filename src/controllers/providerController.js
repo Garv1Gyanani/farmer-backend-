@@ -1219,6 +1219,95 @@ const deleteProviderService = async (req, res, next) => {
   }
 };
 
+// Respond to Farmer's Time Extension Request (Accept or Reject)
+const respondExtensionRequest = async (req, res, next) => {
+  try {
+    const { bookingId } = req.params;
+    const { action, reason } = req.body;
+    if (!['accept', 'reject'].includes(action)) {
+      return res.status(400).json({ success: false, message: 'Action must be "accept" or "reject".' });
+    }
+
+    const booking = await Booking.findById(bookingId);
+    if (!booking || String(booking.providerId) !== String(req.user._id)) {
+      return res.status(404).json({ success: false, message: 'Booking not found or not assigned to you.' });
+    }
+
+    if (booking.status !== STATUS.IN_PROGRESS) {
+      return res.status(400).json({ success: false, message: 'Job is not currently in progress.' });
+    }
+
+    if (!booking.extensionRequest || booking.extensionRequest.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'No pending extension request on this job.' });
+    }
+
+    const hrs = Number(booking.extensionRequest.hours || 0);
+    const amt = Number(booking.extensionRequest.amount || 0);
+
+    if (action === 'accept') {
+      booking.extensionRequest.status = 'accepted';
+      booking.extensionRequest.respondedAt = new Date();
+      booking.extensionRequest.rejectionReason = '';
+      booking.timeline.push({
+        status: booking.status,
+        note: `Provider ${req.user.name} accepted +${hrs} hr(s) extension request (₹${amt}). Awaiting farmer payment.`,
+        updatedBy: req.user._id,
+        timestamp: new Date(),
+      });
+      await booking.save();
+
+      await notifyUser({
+        userId: booking.farmerId,
+        bookingId: booking._id,
+        eventType: EVENTS.DISPATCH_RECEIVED,
+        title: `✅ Extension Approved (+${hrs} Hrs)`,
+        message: `${req.user.name} approved your +${hrs} hr(s) extension. Complete payment of ₹${amt} to confirm.`,
+        data: {
+          type: 'extension_accepted',
+          bookingId: String(booking._id),
+          extensionHours: String(hrs),
+          extensionAmount: String(amt),
+        },
+      });
+    } else {
+      booking.extensionRequest.status = 'rejected';
+      booking.extensionRequest.respondedAt = new Date();
+      booking.extensionRequest.rejectionReason = (reason || 'Provider unavailable for extra hours').trim();
+      booking.timeline.push({
+        status: booking.status,
+        note: `Provider ${req.user.name} declined +${hrs} hr(s) extension request.`,
+        updatedBy: req.user._id,
+        timestamp: new Date(),
+      });
+      await booking.save();
+
+      await notifyUser({
+        userId: booking.farmerId,
+        bookingId: booking._id,
+        eventType: EVENTS.DISPATCH_RECEIVED,
+        title: `Extension Request Declined`,
+        message: `${req.user.name} could not accept the +${hrs} hr(s) extension request.`,
+        data: {
+          type: 'extension_rejected',
+          bookingId: String(booking._id),
+        },
+      });
+    }
+
+    broadcastBookingUpdate(booking, { extensionStatus: booking.extensionRequest.status });
+
+    res.status(200).json({
+      success: true,
+      message: action === 'accept'
+        ? `Extension accepted. Farmer will now pay ₹${amt}.`
+        : 'Extension request declined.',
+      booking,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getProviderDashboard,
   toggleOnlineStatus,
@@ -1242,4 +1331,5 @@ module.exports = {
   createProviderService,
   getMyServices,
   deleteProviderService,
+  respondExtensionRequest,
 };

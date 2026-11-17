@@ -93,6 +93,18 @@ const bookingSchema = new mongoose.Schema(
     startedAt: { type: Date },
     completionRequestedAt: { type: Date },
     extensionHours: { type: Number, default: 0 },
+    extensionRequest: {
+      status: {
+        type: String,
+        enum: ['none', 'pending', 'accepted', 'rejected'],
+        default: 'none',
+      },
+      hours: { type: Number, default: 0 },
+      amount: { type: Number, default: 0 },
+      requestedAt: { type: Date },
+      respondedAt: { type: Date },
+      rejectionReason: { type: String, default: '' },
+    },
     extensions: [
       {
         hours: { type: Number, required: true },

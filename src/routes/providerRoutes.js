@@ -23,6 +23,7 @@ const {
   createProviderService,
   getMyServices,
   deleteProviderService,
+  respondExtensionRequest,
 } = require('../controllers/providerController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
@@ -48,6 +49,7 @@ router.put('/jobs/:bookingId/status', updateJobStatus);
 router.post('/jobs/:bookingId/verify-otp', verifyStartOtp);
 router.post('/jobs/:bookingId/verify-start-otp', verifyStartOtp);
 router.post('/jobs/:bookingId/complete', completeJob);
+router.post('/jobs/:bookingId/extension/respond', respondExtensionRequest);
 router.post('/jobs/:bookingId/verify-completion-otp', verifyCompletionOtp);
 router.get('/earnings', getEarnings);
 router.post('/earnings/withdraw', requestPayout);

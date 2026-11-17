@@ -931,18 +931,11 @@ const verifyPayment = async (req, res, next) => {
 };
 
 // Request Extended Service Time (only allowed after service is in_progress; payment collected immediately)
-const extendBookingTime = async (req, res, next) => {
+// Request Service Time Extension (In-Progress Only — awaits provider acceptance before payment)
+const requestBookingExtension = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const {
-      hours,
-      paymentMethod = 'wallet',
-      razorpayOrderId,
-      razorpayPaymentId,
-      razorpaySignature,
-    } = req.body;
-
-    const extHours = Number(hours);
+    const extHours = Number(req.body?.hours);
     if (!Number.isFinite(extHours) || extHours <= 0) {
       return res.status(400).json({ success: false, message: 'Please select a valid extension duration.' });
     }
@@ -963,6 +956,19 @@ const extendBookingTime = async (req, res, next) => {
       });
     }
 
+    if (booking.extensionRequest?.status === 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: 'An extension request is already pending provider approval.',
+      });
+    }
+    if (booking.extensionRequest?.status === 'accepted') {
+      return res.status(400).json({
+        success: false,
+        message: 'Your extension request is already approved. Please complete payment to confirm.',
+      });
+    }
+
     const service = booking.serviceId;
     const unitRate = Number(service?.basePrice || booking.pricing?.unitPrice || 500);
     const customExt = Array.isArray(service?.extensionOptions)
@@ -974,6 +980,99 @@ const extendBookingTime = async (req, res, next) => {
 
     if (extAmount <= 0) {
       return res.status(400).json({ success: false, message: 'Invalid extension fee.' });
+    }
+
+    booking.extensionRequest = {
+      status: 'pending',
+      hours: extHours,
+      amount: extAmount,
+      requestedAt: new Date(),
+      respondedAt: null,
+      rejectionReason: '',
+    };
+    booking.timeline.push({
+      status: booking.status,
+      note: `Farmer requested a +${extHours} hr(s) service extension (₹${extAmount}). Awaiting service provider acceptance.`,
+      updatedBy: req.user._id,
+      timestamp: new Date(),
+    });
+    await booking.save();
+
+    if (booking.providerId) {
+      await notifyUser({
+        userId: booking.providerId,
+        bookingId: booking._id,
+        eventType: EVENTS.DISPATCH_RECEIVED,
+        title: `⏱️ Time Extension Request (+${extHours} Hrs)`,
+        message: `Farmer requested +${extHours} hour(s) on Booking #${booking.bookingNumber} (₹${extAmount}). Tap to Accept or Decline.`,
+        data: {
+          type: 'extension_requested',
+          bookingId: String(booking._id),
+          extensionHours: String(extHours),
+          extensionAmount: String(extAmount),
+        },
+      });
+    }
+
+    broadcastBookingUpdate(booking, { extensionRequested: true });
+
+    res.status(200).json({
+      success: true,
+      message: `Extension request (+${extHours} hr(s)) sent to service provider.`,
+      booking,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Pay & Confirm Accepted Service Extension
+const extendBookingTime = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      hours,
+      paymentMethod = 'wallet',
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    } = req.body;
+
+    const booking = await Booking.findById(id).populate('serviceId');
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    if (String(booking.farmerId) !== String(req.user._id)) {
+      return res.status(403).json({ success: false, message: 'Not authorized for this booking.' });
+    }
+
+    if (booking.status !== STATUS.IN_PROGRESS) {
+      return res.status(400).json({
+        success: false,
+        message: 'Service extension can only be paid while the service is in progress.',
+      });
+    }
+
+    if (booking.extensionRequest?.status === 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: 'Waiting for service provider to accept your extension request before payment.',
+      });
+    }
+
+    if (booking.extensionRequest?.status !== 'accepted') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please request a time extension and wait for provider acceptance first.',
+      });
+    }
+
+    const extHours = Number(booking.extensionRequest.hours || hours);
+    const extAmount = Number(booking.extensionRequest.amount);
+
+    if (!Number.isFinite(extHours) || extHours <= 0 || !Number.isFinite(extAmount) || extAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid approved extension details.' });
     }
 
     let txnId = '';
@@ -1033,6 +1132,14 @@ const extendBookingTime = async (req, res, next) => {
     booking.pricing.totalAmount = (booking.pricing.totalAmount || 0) + extAmount;
     booking.pricing.providerPayoutAmount = (booking.pricing.providerPayoutAmount || 0) + providerExtra;
     booking.pricing.agentCommissionAmount = (booking.pricing.agentCommissionAmount || 0) + agentExtra;
+    booking.extensionRequest = {
+      status: 'none',
+      hours: 0,
+      amount: 0,
+      requestedAt: null,
+      respondedAt: null,
+      rejectionReason: '',
+    };
     booking.timeline.push({
       status: booking.status,
       note: `Farmer extended service by +${extHours} hr(s) with upfront payment of ₹${extAmount} (${paymentMethod}).`,
@@ -1074,6 +1181,7 @@ module.exports = {
   removeFromCart,
   applyCoupon,
   checkout,
+  requestBookingExtension,
   extendBookingTime,
   getBookingDetails,
   getLiveTracking,
