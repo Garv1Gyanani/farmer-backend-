@@ -18,11 +18,14 @@ router.post('/', upload.single('file'), async (req, res, next) => {
       folder
     );
 
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-    const host = req.get('host');
+    const rawHost = req.headers['x-forwarded-host'] || req.get('host') || '';
+    const isLocalProxy = /^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(rawHost);
+    const baseUrl = isLocalProxy
+      ? (process.env.PUBLIC_API_URL || 'https://apiagritech.divanex.in')
+      : `${req.headers['x-forwarded-proto'] || req.protocol || 'https'}://${rawHost}`;
     const absoluteFileUrl = s3Result.proxyUrl.startsWith('http')
       ? s3Result.proxyUrl
-      : `${protocol}://${host}${s3Result.proxyUrl}`;
+      : `${baseUrl.replace(/\/$/, '')}${s3Result.proxyUrl}`;
 
     res.status(200).json({
       success: true,
