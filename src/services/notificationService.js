@@ -86,13 +86,13 @@ const notifyAdmins = async (payload) => {
   return Promise.all(admins.map((a) => notifyUser({ ...payload, userId: a._id })));
 };
 
-/** Notify the booking's provider, or all approved providers when it has not been allocated. */
+const { getMatchingOnlineProviderIdsForBooking } = require('./dispatchMatcher');
+
+/** Notify the booking's provider, or matching online providers when it is an unassigned admin service. */
 const notifyProvidersForBooking = async (booking, payload) => {
-  if (booking.providerId) {
-    return [await notifyUser({ ...payload, userId: booking.providerId })];
-  }
-  const approved = await ProviderProfile.find({ kycStatus: 'approved' }).select('userId').limit(200);
-  return Promise.all(approved.map((p) => notifyUser({ ...payload, userId: p.userId })));
+  const targetUserIds = await getMatchingOnlineProviderIdsForBooking(booking);
+  if (!targetUserIds.length) return [];
+  return Promise.all(targetUserIds.map((userId) => notifyUser({ ...payload, userId })));
 };
 
 /**

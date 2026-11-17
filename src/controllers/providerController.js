@@ -21,6 +21,10 @@ const {
   broadcastBookingUpdate,
 } = require('../services/notificationService');
 const { settleBooking } = require('../services/bookingSettlement');
+const {
+  buildPendingDispatchQuery,
+  canProviderAcceptBooking,
+} = require('../services/dispatchMatcher');
 
 // Provider Dashboard
 const getProviderDashboard = async (req, res, next) => {
@@ -32,17 +36,16 @@ const getProviderDashboard = async (req, res, next) => {
 
     const wallet = await Wallet.findOne({ userId: req.user._id });
 
-    // Urgent requests: only broadcast waiting dispatches when provider is ONLINE
-    const urgentRequests = profile.isOnline
-      ? await Booking.find({
-          status: STATUS.PENDING,
-          'rejections.providerId': { $ne: req.user._id },
-        })
-          .populate('serviceId', 'title machineryType pricingModel basePrice')
-          .populate('farmerId', 'name phone')
-          .sort({ createdAt: -1 })
-          .limit(5)
-      : [];
+    // Urgent requests: only broadcast category-matched / owned waiting dispatches when ONLINE
+    let urgentRequests = [];
+    if (profile.isOnline) {
+      const dispatchQuery = await buildPendingDispatchQuery(req.user._id, profile);
+      urgentRequests = await Booking.find(dispatchQuery)
+        .populate('serviceId', 'title machineryType pricingModel basePrice')
+        .populate('farmerId', 'name phone')
+        .sort({ createdAt: -1 })
+        .limit(5);
+    }
 
     // Active ongoing jobs (assigned, in_progress, completion_pending)
     const activeJobs = await Booking.find({
@@ -163,7 +166,7 @@ const addMachinery = async (req, res, next) => {
 const getJobs = async (req, res, next) => {
   try {
     const { tab } = req.query; // 'new_requests', 'ongoing', 'completed'
-    const profile = await ProviderProfile.findOne({ userId: req.user._id }).select('isOnline');
+    const profile = await ProviderProfile.findOne({ userId: req.user._id }).select('isOnline primaryCategory');
     const isOnline = profile ? Boolean(profile.isOnline) : false;
 
     if (tab === 'new_requests' && !isOnline) {
@@ -177,10 +180,7 @@ const getJobs = async (req, res, next) => {
 
     let query = {};
     if (tab === 'new_requests') {
-      query = {
-        status: STATUS.PENDING,
-        'rejections.providerId': { $ne: req.user._id },
-      };
+      query = await buildPendingDispatchQuery(req.user._id, profile);
     } else if (tab === 'ongoing') {
       query = {
         providerId: req.user._id,
@@ -216,14 +216,6 @@ const acceptJob = async (req, res, next) => {
   try {
     const { bookingId } = req.params;
 
-    const providerProfile = await ProviderProfile.findOne({ userId: req.user._id }).select('isOnline');
-    if (!providerProfile || !providerProfile.isOnline) {
-      return res.status(400).json({
-        success: false,
-        message: 'You are currently Offline. Toggle Online to accept new dispatch requests.',
-      });
-    }
-
     // Idempotency check: if this booking is already accepted by the calling provider, return 200 smoothly
     const existing = await Booking.findById(bookingId);
     if (!existing) {
@@ -236,6 +228,15 @@ const acceptJob = async (req, res, next) => {
         success: true,
         message: 'Dispatch already accepted. Prepare equipment and proceed to field.',
         booking: existing,
+      });
+    }
+
+    const providerProfile = await ProviderProfile.findOne({ userId: req.user._id }).select('isOnline primaryCategory');
+    const eligibility = await canProviderAcceptBooking(existing, req.user._id, providerProfile);
+    if (!eligibility.allowed) {
+      return res.status(400).json({
+        success: false,
+        message: eligibility.message,
       });
     }
 
